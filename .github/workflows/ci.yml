@@ -29,6 +29,8 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: false
 
       - name: Install ShellCheck on Linux
         if: runner.os == 'Linux'
