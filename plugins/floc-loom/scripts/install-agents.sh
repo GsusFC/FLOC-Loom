@@ -24,7 +24,7 @@ fail() {
   exit 1
 }
 
-script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd) || exit 1
+script_dir=$(CDPATH='' cd "$(dirname "$0")" && pwd) || exit 1
 template_dir=$script_dir/../agents
 target_dir=''
 check_only=0
@@ -76,7 +76,7 @@ esac
 if [ -L "$target_dir" ]; then
   fail "refusing to use a symlink as an agent target directory: $target_dir"
 elif [ -d "$target_dir" ]; then
-  target_dir=$(CDPATH= cd -P "$target_dir" && pwd -P) || fail "could not resolve target directory: $target_dir"
+  target_dir=$(CDPATH='' cd -P "$target_dir" && pwd -P) || fail "could not resolve target directory: $target_dir"
 elif [ -e "$target_dir" ]; then
   # Keep an existing non-directory path for the preflight error below.
   :
@@ -93,7 +93,7 @@ else
     unresolved=$(dirname "$unresolved")
   done
   [ -d "$unresolved" ] || fail "target parent is not a directory: $unresolved"
-  unresolved=$(CDPATH= cd -P "$unresolved" && pwd -P) || fail "could not resolve target parent"
+  unresolved=$(CDPATH='' cd -P "$unresolved" && pwd -P) || fail "could not resolve target parent"
   if [ -n "$suffix" ]; then
     target_dir=$unresolved/$suffix
   else
@@ -108,7 +108,9 @@ agent_files='floc-loom-luna-implementer.toml floc-loom-terra-implementer.toml fl
 # Validate all shipped sources before looking at or mutating the destination.
 for agent_file in $agent_files; do
   template=$template_dir/$agent_file
-  [ -f "$template" ] && [ ! -L "$template" ] || fail "shipped template is missing or not a regular file: $template"
+  if [ ! -f "$template" ] || [ -L "$template" ]; then
+    fail "shipped template is missing or not a regular file: $template"
+  fi
 done
 
 # Preflight every destination before creating a directory or copying a template.

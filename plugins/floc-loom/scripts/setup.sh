@@ -124,8 +124,9 @@ install_json=$setup_tmp/plugin-install.json
 run_agent_installer() {
   installed_plugin_dir=$1
   agent_installer=$installed_plugin_dir/scripts/install-agents.sh
-  [ -f "$agent_installer" ] && [ ! -L "$agent_installer" ] \
-    || fail "installed plugin is missing its agent installer: $agent_installer"
+  if [ ! -f "$agent_installer" ] || [ -L "$agent_installer" ]; then
+    fail "installed plugin is missing its agent installer: $agent_installer"
+  fi
 
   if [ -n "$target_dir" ]; then
     sh "$agent_installer" --target-dir "$target_dir"
@@ -139,8 +140,9 @@ run_agent_installer() {
 check_agent_installer() {
   installed_plugin_dir=$1
   agent_installer=$installed_plugin_dir/scripts/install-agents.sh
-  [ -f "$agent_installer" ] && [ ! -L "$agent_installer" ] \
-    || fail "installed plugin is missing its agent installer: $agent_installer"
+  if [ ! -f "$agent_installer" ] || [ -L "$agent_installer" ]; then
+    fail "installed plugin is missing its agent installer: $agent_installer"
+  fi
 
   if [ -n "$target_dir" ]; then
     sh "$agent_installer" --target-dir "$target_dir" --check
@@ -178,7 +180,7 @@ if [ -n "$local_source" ]; then
     *) local_source=$(pwd -P)/$local_source ;;
   esac
   [ -d "$local_source" ] || fail "local marketplace directory does not exist: $local_source"
-  local_source=$(CDPATH= cd -P "$local_source" && pwd -P) \
+  local_source=$(CDPATH='' cd -P "$local_source" && pwd -P) \
     || fail "could not resolve local marketplace directory: $local_source"
   [ -f "$local_source/.agents/plugins/marketplace.json" ] \
     || fail "local path is not a FLOC*Loom marketplace root: $local_source"
@@ -207,8 +209,9 @@ if ! "$codex_bin" plugin add "$plugin_selector" --json > "$install_json"; then
   fail "could not install $plugin_selector."
 fi
 installed_plugin_dir=$(jq -r '.installedPath // empty' "$install_json")
-[ -n "$installed_plugin_dir" ] && [ -d "$installed_plugin_dir" ] \
-  || fail "Codex did not report a valid installed plugin path."
+if [ -z "$installed_plugin_dir" ] || [ ! -d "$installed_plugin_dir" ]; then
+  fail "Codex did not report a valid installed plugin path."
+fi
 jq -e --arg name "$plugin_name" '.name == $name and (.version | type == "string")' \
   "$installed_plugin_dir/.codex-plugin/plugin.json" >/dev/null \
   || fail "installed plugin manifest has an unexpected name or version."

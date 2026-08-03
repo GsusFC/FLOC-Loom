@@ -22,9 +22,9 @@ hash_agents() {
   fi
 }
 
-script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd) || exit 1
-plugin_dir=$(CDPATH= cd "$script_dir/.." && pwd) || exit 1
-repo_root=$(CDPATH= cd "$plugin_dir/../.." && pwd) || exit 1
+script_dir=$(CDPATH='' cd "$(dirname "$0")" && pwd) || exit 1
+plugin_dir=$(CDPATH='' cd "$script_dir/.." && pwd) || exit 1
+repo_root=$(CDPATH='' cd "$plugin_dir/../.." && pwd) || exit 1
 installer=$script_dir/install-agents.sh
 setup=$script_dir/setup.sh
 runtime_inspector=$script_dir/inspect-agent-runtime.sh
@@ -196,6 +196,9 @@ pass "installer conflict refusal without partial mutation"
 fake_codex=$tmp_dir/fake-codex
 fake_codex_log=$tmp_dir/fake-codex.log
 setup_codex_home=$tmp_dir/setup-codex-home
+# The single-quoted strings below are source code for the fake executable. Their
+# variable references must remain literal until that generated script runs.
+# shellcheck disable=SC2016
 printf '%s\n' \
   '#!/bin/sh' \
   'set -eu' \
