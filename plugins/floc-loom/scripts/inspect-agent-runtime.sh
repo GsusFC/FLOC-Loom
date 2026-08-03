@@ -5,12 +5,21 @@ set -eu
 
 usage() {
   cat <<'EOF'
-Usage: inspect-agent-runtime.sh [--sessions-dir DIR] THREAD_ID
+Usage: inspect-agent-runtime.sh [OPTIONS] THREAD_ID
 
 Read the one rollout file whose filename ends with THREAD_ID and emit a compact JSON
 object containing only safe routing metadata. Without --sessions-dir, the sessions
 root is "$CODEX_HOME/sessions" when CODEX_HOME is already set, otherwise
 "$HOME/.codex/sessions".
+
+Options:
+  --sessions-dir DIR                    Read rollouts from DIR.
+  --expected-role ROLE                  Require this exact custom-agent role.
+  --expected-model MODEL                Require this exact model.
+  --expected-effort EFFORT              Require this exact reasoning effort.
+  --require-sandbox-type TYPE           Require every turn to report TYPE.
+  --require-permission-profile          Require every turn to report a profile type.
+  --help                                Show this help text.
 EOF
 }
 
@@ -20,24 +29,72 @@ fail() {
 }
 
 sessions_dir=''
-case "$#" in
-  1)
-    thread_id=$1
-    ;;
-  3)
-    [ "$1" = "--sessions-dir" ] || {
+expected_role=''
+expected_model=''
+expected_effort=''
+required_sandbox_type=''
+require_permission_profile=0
+thread_id=''
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --sessions-dir)
+      [ "$#" -ge 2 ] || fail "--sessions-dir requires a non-empty directory."
+      [ -n "$2" ] || fail "--sessions-dir requires a non-empty directory."
+      sessions_dir=$2
+      shift 2
+      ;;
+    --expected-role)
+      [ "$#" -ge 2 ] || fail "--expected-role requires a value."
+      [ -n "$2" ] || fail "--expected-role requires a value."
+      expected_role=$2
+      shift 2
+      ;;
+    --expected-model)
+      [ "$#" -ge 2 ] || fail "--expected-model requires a value."
+      [ -n "$2" ] || fail "--expected-model requires a value."
+      expected_model=$2
+      shift 2
+      ;;
+    --expected-effort)
+      [ "$#" -ge 2 ] || fail "--expected-effort requires a value."
+      [ -n "$2" ] || fail "--expected-effort requires a value."
+      expected_effort=$2
+      shift 2
+      ;;
+    --require-sandbox-type)
+      [ "$#" -ge 2 ] || fail "--require-sandbox-type requires a value."
+      [ -n "$2" ] || fail "--require-sandbox-type requires a value."
+      required_sandbox_type=$2
+      shift 2
+      ;;
+    --require-permission-profile)
+      require_permission_profile=1
+      shift
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    --*)
       usage >&2
       exit 2
-    }
-    [ -n "$2" ] || fail "--sessions-dir requires a non-empty directory."
-    sessions_dir=$2
-    thread_id=$3
-    ;;
-  *)
-    usage >&2
-    exit 2
-    ;;
-esac
+      ;;
+    *)
+      [ -z "$thread_id" ] || {
+        usage >&2
+        exit 2
+      }
+      thread_id=$1
+      shift
+      ;;
+  esac
+done
+
+[ -n "$thread_id" ] || {
+  usage >&2
+  exit 2
+}
 
 if ! printf '%s\n' "$thread_id" | LC_ALL=C grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'; then
   fail "THREAD_ID must be a lowercase UUID."
@@ -64,7 +121,7 @@ matches_file=''
 cleanup() {
   if [ -n "$matches_file" ] && [ -f "$matches_file" ]; then
     case "$matches_file" in
-      "$tmp_base"/sol-advisor-runtime.*)
+      "$tmp_base"/floc-loom-runtime.*)
         rm -f "$matches_file"
         ;;
       *)
@@ -76,7 +133,7 @@ cleanup() {
 
 trap cleanup 0 HUP INT TERM
 
-matches_file=$(mktemp "$tmp_base/sol-advisor-runtime.XXXXXX") || fail "could not create a temporary match list."
+matches_file=$(mktemp "$tmp_base/floc-loom-runtime.XXXXXX") || fail "could not create a temporary match list."
 
 # Match only the exact rollout filename suffix; do not inspect any rollout contents
 # until exactly one filename has been found.
@@ -96,7 +153,13 @@ IFS= read -r rollout_file < "$matches_file" || fail "could not read the matched 
 
 # The jq program reads only the matched JSONL and constructs a new allowlisted object.
 # It rejects absent or conflicting required routing values instead of inferring them.
-if ! jq -ce -s --arg expected_thread_id "$thread_id" '
+if ! jq -ce -s \
+  --arg expected_thread_id "$thread_id" \
+  --arg expected_role "$expected_role" \
+  --arg expected_model "$expected_model" \
+  --arg expected_effort "$expected_effort" \
+  --arg required_sandbox_type "$required_sandbox_type" \
+  --argjson require_permission_profile "$require_permission_profile" '
   def string_or_null:
     if type == "string" then . else null end;
 
@@ -122,14 +185,26 @@ if ! jq -ce -s --arg expected_thread_id "$thread_id" '
       error("session metadata does not identify the requested thread")
     elif $agent_role == null or $agent_role == "" then
       error("missing agent role")
+    elif $expected_role != "" and $agent_role != $expected_role then
+      error("unexpected agent role")
     elif any($models[]; . == null or . == "") then
       error("missing model")
     elif any($efforts[]; . == null or . == "") then
       error("missing effort")
     elif ($models | unique | length) != 1 then
       error("conflicting models")
+    elif $expected_model != "" and $models[0] != $expected_model then
+      error("unexpected model")
     elif ($efforts | unique | length) != 1 then
       error("conflicting efforts")
+    elif $expected_effort != "" and $efforts[0] != $expected_effort then
+      error("unexpected effort")
+    elif $required_sandbox_type != "" and any($sandbox_types[]; . == null or . == "") then
+      error("missing sandbox policy type")
+    elif $required_sandbox_type != "" and any($sandbox_types[]; . != $required_sandbox_type) then
+      error("unexpected sandbox policy type")
+    elif $require_permission_profile == 1 and any($permission_types[]; . == null or . == "") then
+      error("missing permission profile type")
     elif ($sandbox_types | unique | length) != 1 then
       error("conflicting sandbox policy types")
     elif ($permission_types | unique | length) != 1 then

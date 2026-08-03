@@ -1,0 +1,71 @@
+name: Verify FLOC*Loom
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install ShellCheck on Linux
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes shellcheck
+
+      - name: Install ShellCheck on macOS
+        if: runner.os == 'macOS'
+        run: brew install shellcheck
+
+      - name: ShellCheck
+        run: shellcheck plugins/floc-loom/scripts/*.sh
+
+      - name: Repository verifier
+        run: sh plugins/floc-loom/scripts/verify.sh
+
+      - name: Standalone ledger regression tests
+        run: python3 plugins/floc-loom/scripts/test_ledger.py
+
+      - name: Validate skill
+        run: |
+          validator="$HOME/.codex/skills/.system/skill-creator/scripts/quick_validate.py"
+          if [ -f "$validator" ]; then
+            uv run --no-project --with pyyaml python "$validator" plugins/floc-loom/skills/orchestration
+          else
+            echo "Codex system skill validator is not installed on this runner; repository verifier still ran."
+          fi
+
+      - name: Validate plugin
+        run: |
+          validator="$HOME/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py"
+          if [ -f "$validator" ]; then
+            uv run --no-project --with pyyaml python "$validator" plugins/floc-loom
+          else
+            echo "Codex system plugin validator is not installed on this runner; repository verifier still ran."
+          fi
+
+      - name: Validate JSON and whitespace
+        run: |
+          jq empty .agents/plugins/marketplace.json plugins/floc-loom/.codex-plugin/plugin.json
+          git diff --check

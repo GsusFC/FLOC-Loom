@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install Sol Advisor's shipped custom-agent templates without changing Codex config.
+# Install FLOC*Loom's shipped custom-agent templates without changing Codex config.
 
 set -eu
 
@@ -7,7 +7,7 @@ usage() {
   cat <<'EOF'
 Usage: install-agents.sh [--target-dir <path>] [--check]
 
-Install the three Sol Advisor custom-agent templates into the target directory.
+Install the three FLOC*Loom custom-agent templates into the target directory.
 Without --target-dir, the target is "$CODEX_HOME/agents" when CODEX_HOME is already
 set, otherwise "$HOME/.codex/agents". The script never overwrites a differing file.
 
@@ -26,14 +26,7 @@ fail() {
 
 script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd) || exit 1
 template_dir=$script_dir/../agents
-
-if [ -n "${CODEX_HOME-}" ]; then
-  target_dir=$CODEX_HOME/agents
-else
-  [ -n "${HOME-}" ] || fail "HOME is unset and CODEX_HOME was not supplied; pass --target-dir explicitly."
-  target_dir=$HOME/.codex/agents
-fi
-
+target_dir=''
 check_only=0
 
 while [ "$#" -gt 0 ]; do
@@ -61,15 +54,56 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-# Make explicitly supplied relative paths unambiguous before any file operation.
+# Resolve the default only after parsing options so an explicit target works even when
+# HOME and CODEX_HOME are unset.
+if [ -z "$target_dir" ]; then
+  if [ -n "${CODEX_HOME-}" ]; then
+    target_dir=$CODEX_HOME/agents
+  else
+    [ -n "${HOME-}" ] || fail "HOME is unset and CODEX_HOME was not supplied; pass --target-dir explicitly."
+    target_dir=$HOME/.codex/agents
+  fi
+fi
+
+# Make supplied relative paths unambiguous and canonicalize existing parents. This
+# closes lexical root bypasses such as /tmp/.. while preserving support for a target
+# directory that does not exist yet.
 case "$target_dir" in
   /*) ;;
   *) target_dir=$(pwd -P)/$target_dir ;;
 esac
 
+if [ -L "$target_dir" ]; then
+  fail "refusing to use a symlink as an agent target directory: $target_dir"
+elif [ -d "$target_dir" ]; then
+  target_dir=$(CDPATH= cd -P "$target_dir" && pwd -P) || fail "could not resolve target directory: $target_dir"
+elif [ -e "$target_dir" ]; then
+  # Keep an existing non-directory path for the preflight error below.
+  :
+else
+  unresolved=$target_dir
+  suffix=''
+  while [ ! -e "$unresolved" ] && [ "$unresolved" != "/" ]; do
+    component=$(basename "$unresolved")
+    if [ -n "$suffix" ]; then
+      suffix=$component/$suffix
+    else
+      suffix=$component
+    fi
+    unresolved=$(dirname "$unresolved")
+  done
+  [ -d "$unresolved" ] || fail "target parent is not a directory: $unresolved"
+  unresolved=$(CDPATH= cd -P "$unresolved" && pwd -P) || fail "could not resolve target parent"
+  if [ -n "$suffix" ]; then
+    target_dir=$unresolved/$suffix
+  else
+    target_dir=$unresolved
+  fi
+fi
+
 [ "$target_dir" != "/" ] || fail "refusing to use the filesystem root as an agent target directory."
 
-agent_files='sol-advisor-luna-implementer.toml sol-advisor-terra-implementer.toml sol-advisor-sol-reviewer.toml'
+agent_files='floc-loom-luna-implementer.toml floc-loom-terra-implementer.toml floc-loom-sol-reviewer.toml'
 
 # Validate all shipped sources before looking at or mutating the destination.
 for agent_file in $agent_files; do
@@ -111,7 +145,7 @@ done
 [ "$preflight_failed" -eq 0 ] || exit 1
 
 if [ "$check_only" -eq 1 ]; then
-  printf '%s\n' "CHECK PASSED: all Sol Advisor agent files exactly match $template_dir."
+  printf '%s\n' "CHECK PASSED: all FLOC*Loom agent files exactly match $template_dir."
   exit 0
 fi
 
@@ -136,7 +170,7 @@ for agent_file in $agent_files; do
   # Stage alongside the destination, then hard-link it into place. ln fails if another
   # process created the destination after preflight, so a late conflicting file is
   # never overwritten by cp's normal replacement behavior.
-  staged=$(mktemp "$target_dir/.sol-advisor-agent.XXXXXX") || fail "could not stage template for installation: $destination"
+  staged=$(mktemp "$target_dir/.floc-loom-agent.XXXXXX") || fail "could not stage template for installation: $destination"
   if ! cp "$template" "$staged"; then
     rm -f "$staged"
     fail "could not stage template for installation: $destination"
@@ -162,4 +196,4 @@ for agent_file in $agent_files; do
   cmp -s "$template" "$destination" || fail "post-install exactness check failed: $destination"
 done
 
-printf '%s\n' "INSTALL PASSED: all Sol Advisor agent files exactly match $template_dir."
+printf '%s\n' "INSTALL PASSED: all FLOC*Loom agent files exactly match $template_dir."

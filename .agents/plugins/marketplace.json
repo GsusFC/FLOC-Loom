@@ -1,14 +1,14 @@
 {
-  "name": "sol-advisor",
+  "name": "floc-studio",
   "interface": {
-    "displayName": "Sol Advisor"
+    "displayName": "FLOC* Studio"
   },
   "plugins": [
     {
-      "name": "sol-advisor",
+      "name": "floc-loom",
       "source": {
         "source": "local",
-        "path": "./plugins/sol-advisor"
+        "path": "./plugins/floc-loom"
       },
       "policy": {
         "installation": "AVAILABLE",

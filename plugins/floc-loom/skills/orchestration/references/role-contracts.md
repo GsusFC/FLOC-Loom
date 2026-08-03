@@ -1,6 +1,6 @@
 # Native Codex role contracts
 
-Use these contracts with Sol Advisor's namespaced, role-pinned native custom agents.
+Use these contracts with FLOC*Loom's namespaced, role-pinned native custom agents.
 They are not nested Codex CLI wrappers and they do not change global default-subagent
 routing. Load only the contract needed for the next spawn. Adapt every placeholder;
 do not remove a required field.
@@ -17,26 +17,40 @@ Before every spawn, complete steps 1–2 of the preflight in SKILL.md; complete 
 3. After spawn, inspect public native spawn/details metadata first. If it omits model
    or effort and the local rollout is accessible, resolve
    ../../scripts/inspect-agent-runtime.sh relative to SKILL.md and run it with the
-   native subagent thread id. Its allowlisted JSON is the authoritative local fallback
-   for omitted model and effort. Public and local values must agree when both exist.
+   native subagent thread id plus the expected role/model/effort flags. Its allowlisted
+   JSON is the authoritative local fallback for omitted model and effort. Public and
+   local values must agree when both exist.
 4. Require exact role, model, and reasoning-effort observation before accepting the
    selected lane. Always inspect and report the Sol reviewer's observed sandbox policy
    type and permission profile type; the shipped TOML requests read-only but a host may
-   broaden it.
+   broaden it. The local fallback must reject missing sandbox or permission metadata.
 
-A missing, stale, conflicting, unavailable, inconsistent, or unobservable
-role/model/effort stops the affected lane. Report the actionable installer, local
-runtime-inspection, or fresh-task step; never silently fall back to a built-in role,
-another model, another effort, or a differently named agent. The custom-agent TOML
-pins the role's model and effort, so omit all per-spawn model and reasoning overrides.
+A missing role file stops the current lane but may be installed through SKILL.md's
+approval-gated first-use flow; after installation, require a fresh Codex task before
+delegation. A stale, differing, conflicting, unavailable, inconsistent, or unobservable
+role/model/effort also stops the affected lane and must not be overwritten or bypassed.
+Report the actionable installer, local runtime-inspection, or fresh-task step; never
+silently fall back to a built-in role, another model, another effort, or a differently
+named agent. The custom-agent TOML pins the role's model and effort, so omit all
+per-spawn model and reasoning overrides.
 
 ## Shared implementation contract
 
-Every Luna or Terra prompt must contain all five sections below. Give each worker a
-non-overlapping file set or bounded responsibility. Independent, non-overlapping work
-may run in parallel; shared files and dependency chains must run serially.
+Every Luna or Terra prompt must contain the routing headers and all five implementation
+sections below. Give each worker a non-overlapping file set or bounded responsibility.
+Independent, non-overlapping work may run in parallel; shared files and dependency
+chains must run serially. For a graph node, apply the lane and domain eligibility rules
+in [execution-graphs.md](execution-graphs.md).
 
 ~~~text
+ROUTING CONTEXT
+GRAPH NODE: <stable node id, or direct>
+DOMAIN: frontend | backend | full-stack | data | infrastructure | general
+DELIVERY BOUNDARY: task | commit | PR
+DEPENDS ON: <accepted node ids or none>
+DESIGN SOURCE: <studio-approved reference/specification, or not applicable>
+LANE REASON: <why Luna is the bounded first choice, or why Terra escalation is required>
+
 OBJECTIVE
 <Observable outcome and why it matters.>
 
@@ -59,6 +73,8 @@ VERIFICATION
   Success: <concrete expected result>
 - Inspect: <exact file, diff, or generated artifact>
   Success: <concrete expected evidence>
+- Domain gate: <browser evidence, API/integration evidence, or not applicable>
+  Success: <observable domain-specific evidence>
 
 RETURN
 Return the report below. Include exact commands and actual output evidence; a completion
@@ -66,6 +82,8 @@ claim without evidence is invalid.
 
 IMPLEMENTATION REPORT
 STATUS: complete | partial | blocked
+GRAPH NODE: <stable node id, or direct>
+DOMAIN: <assigned domain>
 OBJECTIVE: <one-line restatement>
 CHANGES: <file-by-file summary from the actual diff>
 VERIFIED: <exact commands plus concrete output evidence>
@@ -76,26 +94,49 @@ GAPS: <unfinished work, ambiguity, or none>
 The primary session must inspect the actual diff and rerun verification. The report is
 not evidence by itself.
 
-## Luna — routine implementer
+## Execution ledger
+
+The parent session must create an execution ledger with `../../scripts/ledger.py` and
+record each worker's observed routing, every successful verification command, the
+before/after review snapshots, and the final review. The ledger's `accept` command is
+the acceptance gate; a worker report or `VERDICT: ship` line by itself is insufficient.
+
+The ledger stores artifacts outside the repository by default under
+`$FLOC_LOOM_RUNS_DIR`, `$CODEX_HOME/floc-loom/runs`, or `$HOME/.codex/floc-loom/runs`.
+Use an explicit `--ledger-root` for disposable tests. Its default policy requires an
+observed reviewer sandbox type of `read-only`. If hard isolation is not required and
+the host broadens the sandbox, acceptance must explicitly use
+`--allow-behavioral-read-only` and report the residual risk.
+
+## Luna — preferred bounded implementer
 
 Spawn a native custom subagent thread with exactly:
 
 ~~~text
-agent_type: sol_advisor_luna_implementer
+agent_type: floc_loom_luna_implementer
 fork_turns: none
 ~~~
 
-The installed sol_advisor_luna_implementer file pins GPT-5.6 Luna at max reasoning.
+The installed floc_loom_luna_implementer file pins GPT-5.6 Luna at max reasoning.
 Do not attach a per-spawn model or reasoning field. Require public-details-first
 runtime observation of that role and pin, using the local inspector only if public
 details omit model or effort, before accepting its report.
 
-Prompt:
+Use Luna first for bounded frontend, backend, and full-stack nodes when the eligibility
+conditions in `execution-graphs.md` are satisfied. It may own feature implementation,
+but it must not own unsettled design or architecture decisions. High-risk security,
+migration, concurrency, distributed-effects, debugging, and broad integration work
+must be escalated when it cannot be bounded safely. Prompt:
 
 ~~~text
 ROLE
-Act as the routine implementation worker. Execute the supplied specification exactly;
-surface ambiguity instead of redesigning the architecture.
+Act as the preferred bounded implementation worker. Implement the supplied frontend,
+backend, or full-stack node within its settled architecture and interfaces, and apply
+the assigned domain verification profile. Make local implementation decisions that are
+consistent with the contract, but report unresolved architecture or unusually
+high-risk technical judgment instead of improvising. If a material design decision is
+missing or conflicting, stop and return it to the studio; do not invent or reinterpret
+the design.
 
 <paste and complete the Shared implementation contract>
 ~~~
@@ -104,27 +145,31 @@ If the exact template preflight, native type exposure, or runtime pin observatio
 fails, stop and report the limitation. Never silently fall back to another model or
 reasoning level.
 
-## Terra — complex implementer
+## Terra — capability and high-risk escalation implementer
 
 Spawn a native custom subagent thread with exactly:
 
 ~~~text
-agent_type: sol_advisor_terra_implementer
+agent_type: floc_loom_terra_implementer
 fork_turns: none
 ~~~
 
-The installed sol_advisor_terra_implementer file pins GPT-5.6 Terra at max reasoning.
+The installed floc_loom_terra_implementer file pins GPT-5.6 Terra at max reasoning.
 Do not attach a per-spawn model or reasoning field. Require public-details-first
 runtime observation of that role and pin, using the local inspector only if public
 details omit model or effort, before accepting its report.
 
-Prompt:
+Use Terra when a node needs broader context or unusually high-risk technical judgment,
+or when Luna's verified attempt demonstrates a capability/context mismatch. Prompt:
 
 ~~~text
 ROLE
-Act as the complex implementation worker. Resolve the difficult implementation details
-within the settled architecture, document material judgment calls, and preserve every
-stated interface and constraint.
+Act as the product implementation worker. Resolve implementation details within the
+settled architecture, apply the assigned domain verification profile, document material
+technical judgment calls, and preserve every stated interface and constraint. Implement
+frontend only against the supplied studio-approved design source. If that source leaves
+a material decision open or conflicts with another source, stop and return it to the
+studio; do not redesign.
 
 <paste and complete the Shared implementation contract>
 ~~~
@@ -139,11 +184,11 @@ Spawn a new native custom review thread after implementation and primary-session
 verification, with exactly:
 
 ~~~text
-agent_type: sol_advisor_sol_reviewer
+agent_type: floc_loom_sol_reviewer
 fork_turns: none
 ~~~
 
-The installed sol_advisor_sol_reviewer file pins GPT-5.6 Sol at high reasoning and
+The installed floc_loom_sol_reviewer file pins GPT-5.6 Sol at high reasoning and
 requests a read-only sandbox. Do not attach a per-spawn model or reasoning field.
 Require public-details-first observation of the Sol/high pin, using the local inspector
 only if public details omit model or effort. Also capture the observed sandbox policy
@@ -163,12 +208,20 @@ STATED GOAL
 ACCUMULATED CHANGE SET
 <Exact allowed files plus the complete working-tree diff, or explicit base/head revisions.>
 
+GRAPH AND INTEGRATION
+<Node id and accepted dependencies, or direct. For an integration review, include the
+complete graph, PR bases, invalidated/reverified descendants, and final integration
+node evidence.>
+
 INTERFACES AND CONSTRAINTS
 - <Required compatibility, repository rules, safety boundaries, and excluded scope.>
+- <Studio-approved design source and approved deviations, or not applicable.>
 
 VERIFICATION EVIDENCE
 - <command> -> <actual primary-session output evidence>
 - <Relevant artifact or diff inspection> -> <actual evidence>
+- <Frontend browser evidence, backend boundary evidence, or full-stack integration
+  evidence when applicable>
 
 REVIEW
 Inspect the actual files and accumulated change set. Judge correctness, completeness,
@@ -186,7 +239,8 @@ Use ship only when the stated goal is met by the inspected change set and eviden
 Use fix-first for bounded required corrections. Use rethink when architecture or scope
 must change. If any fix is made after review, discard that verdict and run a new,
 fresh reviewer under the same observed-sandbox policy with a newly accumulated change
-set and verification evidence.
+set and verification evidence. After a `ship` verdict, the parent must record it in
+the execution ledger and run the fail-closed `accept` command before reporting done.
 
 If the exact template preflight, native type exposure, or required role/model/effort
 observation fails, stop and report the limitation. Never silently fall back to another
@@ -209,7 +263,7 @@ For a pre-implementation consult, use a fresh native custom review thread with a
 requested read-only profile, exactly:
 
 ~~~text
-agent_type: sol_advisor_sol_reviewer
+agent_type: floc_loom_sol_reviewer
 fork_turns: none
 ~~~
 

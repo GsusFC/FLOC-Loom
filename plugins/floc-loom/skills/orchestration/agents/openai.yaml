@@ -1,0 +1,4 @@
+interface:
+  display_name: "FLOC*Loom Orchestration"
+  short_description: "Build with Luna Max, escalate to Terra, and require fresh Sol review"
+  default_prompt: "Use $orchestration to set up or verify FLOC*Loom when needed; otherwise choose direct execution or an adaptive delivery graph, apply frontend/backend gates, prefer Luna Max for bounded implementation, escalate to Terra when required, record evidence, and obtain a fresh Sol verdict before acceptance."
