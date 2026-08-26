@@ -1,130 +1,104 @@
 ---
 name: orchestration
-description: "Codex-native architect, setup, and delegation workflow that uses separately installed, role-pinned custom agents: GPT-5.6 Luna at max reasoning as the preferred implementer for well-specified frontend/backend nodes, GPT-5.6 Terra at max reasoning for capability and high-risk escalation, and a fresh GPT-5.6 Sol reviewer at high reasoning with observed sandbox evidence. Use for FLOC*Loom installation or onboarding, delegated implementation, adaptive execution graphs, parallel or stacked deliverables, frontend/backend/full-stack work, feature work, bug fixes, refactors, lane selection, five-part implementation specs, execution-ledger evidence, verification of subagent work, commitment-boundary advice, or any deliverable that must receive a final independent-context Sol review before acceptance."
+description: "Codex-native architect, setup, and delegation workflow that uses separately installed, role-pinned custom agents: GPT-5.6 Luna at max reasoning for bounded implementation, GPT-5.6 Terra at max reasoning for high-risk escalation, and a fresh GPT-5.6 Sol reviewer with observed sandbox evidence. Use for FLOC*Loom installation or onboarding, selective solo/delegate/audit/full routing, adaptive execution graphs, frontend/backend/full-stack work, execution-ledger evidence, commitment-boundary advice, or final review before acceptance."
 ---
 
 # FLOC*Loom Orchestration
 
-Act as the architect. Own the user's intent, architecture, dependency graph, routing,
-verification, and final acceptance. Delegate implementation volume to the least
-expensive adequate lane without treating price as evidence of capability, then obtain a
-fresh Sol verdict before reporting a deliverable complete. The implementation and
-reviewer lanes are native Codex custom-agent threads, not a nested Codex CLI wrapper or
-a global default-subagent setting.
+Act as the architect. Own the user's intent, architecture, route declaration,
+dependency graph, verification, and final acceptance. Use the least expensive route
+that still supplies the guarantees the task needs; lower cost is never proof of lower
+risk. Native custom-agent threads are not nested Codex CLI wrappers or a global
+subagent default.
 
-Read [references/role-contracts.md](references/role-contracts.md) before the first
-delegation in a session. It defines the required implementation spec, reports, and
-review packet.
+**Mandatory reads before work:**
 
-Read [references/execution-graphs.md](references/execution-graphs.md) before planning a
-multi-deliverable, parallel, stacked-PR, frontend/backend, or full-stack build. It
-defines graph nodes, safe scheduling, lane eligibility, domain verification, and
-integration acceptance.
+1. Read [references/role-contracts.md](references/role-contracts.md) before the first
+   delegation, commitment consult, or final review. It defines role pins, review
+   packets, the semantic security/observability sweep, and correction-boundary rules.
+2. Read [references/operations.md](references/operations.md) before the first route
+   declaration, runtime observation, ledger operation, installer update, or acceptance.
+   It owns commands, evidence capture, ledger mechanics, and maintenance details.
+3. Read [references/execution-graphs.md](references/execution-graphs.md) before
+   planning a multi-deliverable, parallel, stacked-PR, frontend/backend, or full-stack
+   build. It defines graph composition, safe scheduling, lane eligibility, domain
+   verification, and integration acceptance.
 
 ## Confirm the primary session
 
-Run the primary Codex session on gpt-5.6-sol with high reasoning. Verify the current
+Run the primary Codex session on GPT-5.6 Sol with high reasoning. Verify the current
 model and effort when the runtime exposes them. If either setting differs, tell the
 user how to select Sol / High and stop before delegation. If the runtime does not
-expose the settings, ask the user to confirm that Sol / High is selected and stop
-until they confirm. A skill cannot change the primary session's model itself; never
-assume or claim that this prerequisite is satisfied.
+expose the settings, ask the user to confirm Sol / High and stop until they confirm. A
+skill cannot change the primary session's model itself; never assume or claim this
+prerequisite is satisfied.
 
 ## Preflight the companion custom agents
 
 The three role files are user-owned native custom-agent TOML files. Installing or
-updating this plugin does **not** install, overwrite, or register them automatically.
-They must be installed separately and a fresh Codex task must be started so the native
-spawn tool can discover the current roles.
+updating this plugin does **not** register them automatically. They must be installed
+separately and a fresh Codex task must be started so the native spawn tool can discover
+the current roles.
 
-Before every delegation, complete steps 1–2. After spawning a lane, complete steps
-3–4 before accepting any result:
+Before every delegation, run the role-aware non-mutating check from the directory
+containing this SKILL.md. Follow the exact commands and migration exits in
+[operations.md](references/operations.md). The all-role `--check` remains the default
+preflight; `--check-role luna|terra|sol` narrows a deliberate role-specific check.
 
-1. From the directory containing this SKILL.md, resolve
-   ../../scripts/install-agents.sh; never resolve it from the caller's current
-   directory. Run its non-mutating exactness check:
+The check proves installed role files match the current shipped templates. Missing files
+may be added only through the approval-gated installer flow. A stale, differing,
+symlinked, or conflicting file is a deliberate refusal: do not overwrite it, select a
+substitute role, or work around it. The v0.5 installer may migrate only an allowlisted,
+byte-exact historical shipped Sol reviewer; it never overwrites arbitrary user changes.
+After any successful role install or migration, stop and ask the user to start a fresh
+Codex task because native role discovery occurs at task creation.
 
-   ~~~sh
-   skill_dir=<directory-containing-this-SKILL.md>
-   installer="$skill_dir/../../scripts/install-agents.sh"
-   sh "$installer" --check
-   ~~~
+Inspect the native spawn tool's available `agent_type` entries before any lane runs.
+All three names must be exposed exactly:
 
-   It must exit zero. That proves every installed role file is byte-for-byte identical
-   to the shipped template. If it reports only missing files, offer to run the same
-   installer once without `--check`. That operation writes user-owned Codex agent
-   profiles, so obtain the required user/tool approval before running it. The installer
-   adds only missing files and performs its own exactness check. After it succeeds,
-   stop and tell the user to start a new Codex task because native agent types are
-   discovered at task creation.
+- `floc_loom_luna_implementer`
+- `floc_loom_terra_implementer`
+- `floc_loom_sol_reviewer`
 
-   If the check reports a stale, differing, symlinked, or otherwise conflicting file,
-   do not run the installer automatically: it intentionally refuses replacement. Give
-   the user the exact source and destination paths and ask them to reconcile the
-   conflict deliberately. Do not work around either state by choosing another agent.
+After spawn, accept lane routing only after the public-details-first/runtime-inspector
+procedure from the role contracts proves the selected role, model, and effort. The
+reviewer additionally requires observed sandbox policy type and permission profile
+type. If a value is absent, inconsistent, unavailable, or unobservable, stop that lane
+with its executable installer/fresh-task/runtime-inspection exit. Never silently fall
+back to another role, model, or effort. The custom-agent file—not the spawn call—pins
+each model and reasoning effort.
 
-2. Inspect the native spawn tool's available agent_type entries. All three names must
-   be exposed exactly before any lane may run:
+## Declare a selective route before work
 
-   - floc_loom_luna_implementer
-   - floc_loom_terra_implementer
-   - floc_loom_sol_reviewer
+Read-only discovery and role preflight may precede route selection. For every direct
+deliverable or graph node, declare **one** route before its first mutation or auxiliary
+spawn. The declaration is scoped to that deliverable/node, not globally: an adaptive
+graph may safely compose several independently routed nodes. Persist every non-solo
+route in its route-aware ledger before work; record a solo route in the direct spec or
+graph node.
 
-   If a name is missing or unavailable, stop the affected lane and tell the user to
-   install/check the companion files, start a fresh task, and update Codex if the name
-   is still not exposed. Never substitute a built-in role or a similarly named agent.
+Routes may only escalate. Never downgrade a declaration or reuse a weaker ledger after
+a task crosses its boundary. Use the explicit ledger escalation operation from
+[operations.md](references/operations.md) for `delegate`/`audit`/`full`; reclassify
+`solo` before exceeding its boundary.
 
-3. Treat byte-exact templates plus observed runtime routing as an acceptance gate. Use
-   public native spawn/details metadata first. It must identify the selected custom
-   role; when it also exposes model and effort, compare them with the pinned lane.
+| Route | Use only when | Acceptance contract |
+|---|---|---|
+| `solo` | Read-only work, or one-file mechanical low-risk mutation | No auxiliary and no delegated-deliverable ledger; reclassify first if the boundary expands |
+| `delegate` | One bounded Luna implementer can substitute for primary implementation | Root verification plus the exact unchanged verified-state binding; no Sol review and no Terra |
+| `audit` | Primary session implements and verifies, then needs independent review | Successful primary verification and one fresh Sol review; worker evidence is rejected |
+| `full` | A Luna/Terra implementer is justified and independent review remains required | One worker, root verification, and one fresh Sol review |
 
-   If public details omit model or effort and the local rollout is accessible, resolve
-   ../../scripts/inspect-agent-runtime.sh relative to this SKILL.md and run it against
-   the spawned native thread id:
+Consequential integration boundaries and independently accepted PR boundaries require
+`audit` or `full`. The one-auxiliary default is per direct deliverable/node, never a
+cap on unrelated graph nodes. `delegate` has exactly one bounded Luna implementation
+worker; risk-driven Terra evidence is accepted only on `full`.
 
-   ~~~sh
-   skill_dir=<directory-containing-this-SKILL.md>
-   runtime_inspector="$skill_dir/../../scripts/inspect-agent-runtime.sh"
-   sh "$runtime_inspector" \
-     --expected-role <expected-role> \
-     --expected-model <expected-model> \
-     --expected-effort <expected-effort> \
-     <native-subagent-thread-id>
-   ~~~
-
-   This read-only helper locates only the exact local rollout filename for that id and
-   emits an allowlisted routing object. The expected flags make the helper fail on a
-   role/model/effort mismatch instead of leaving comparison to memory. It is the
-   authoritative local fallback for omitted model and effort, not a replacement agent
-   or an inferred guess. If both public details and the helper expose a value, they must
-   agree.
-
-   The accepted values remain Luna / max for preferred bounded implementation, Terra /
-   max for escalation, and Sol / high for review. If the selected role, model, or
-   effort is missing, inconsistent, unavailable, or unobservable after this procedure,
-   stop that lane with an actionable error and do not accept its report as routed work.
-   Never silently fall back to another model, effort, or agent type.
-
-4. Always inspect and report the reviewer's observed sandbox policy type and permission
-   profile type from public details, or from the local helper when public details omit
-   them. For the local fallback, require both fields explicitly:
-
-   ~~~sh
-   sh "$runtime_inspector" \
-     --expected-role floc_loom_sol_reviewer \
-     --expected-model gpt-5.6-sol \
-     --expected-effort high \
-     --require-sandbox-type read-only \
-     --require-permission-profile \
-     <native-review-thread-id>
-   ~~~
-
-   The shipped reviewer file requests read-only sandboxing; a host permission profile
-   can broaden that request. Do not call the review OS-enforced read-only unless the
-   observed sandbox policy type is read-only.
-
-The custom-agent file, not the spawn call, pins each model and reasoning effort. Do
-not add a per-spawn model or reasoning override anywhere in this workflow.
+Any work that touches a conditional review-trigger surface defined in
+[role-contracts.md](references/role-contracts.md#conditional-security-and-observability-sweep)
+must use `audit` or `full` so the required final-review sweep cannot be bypassed. When
+an implementer is used on that work, route `full`. Do not turn a sensitive task into
+`solo` or reviewer-free `delegate` by splitting it into symptom patches.
 
 ## Choose direct execution or an adaptive graph
 
@@ -133,127 +107,44 @@ change. Do not create graph ceremony when there is no useful dependency or concu
 decision.
 
 For two or more material deliverables, cross-domain work, parallel execution, or
-stacked PRs, build the adaptive execution graph from `references/execution-graphs.md`
-before delegation. The graph is a delivery DAG, not automatically a PR graph: choose a
-task, commit, or PR boundary according to review and rollback needs. Branch, commit, and
-PR creation still require the user's authorization.
+stacked PRs, build the adaptive execution graph before delegation. The graph is a
+delivery DAG, not automatically a PR graph: choose a task, commit, or PR boundary
+according to review and rollback needs. Branch, commit, and PR creation still require
+the user's authorization.
 
-The primary session owns graph state. Start a node only when its dependencies are
-accepted, its interfaces are settled, and its file ownership does not overlap another
-active node. Add an integration node whenever correctness emerges across node or
-frontend/backend boundaries. Worker reports do not advance a node to verified or
-accepted without primary evidence and the required review gate.
-
-## Record an execution ledger
-
-The skill's instructions are not a host-level hook. Use the companion ledger as the
-fail-closed acceptance gate, and do not report completion unless `accept` succeeds.
-Resolve it relative to this skill; never resolve it from the caller's working directory:
-
-~~~sh
-skill_dir=<directory-containing-this-SKILL.md>
-ledger="$skill_dir/../../scripts/ledger.py"
-~~~
-
-Initialize one ledger per deliverable with the complete allowed file set:
-
-~~~sh
-python3 "$ledger" init \
-  --repo <repository> \
-  --ledger-root <runs-root> \
-  --run-id <lowercase-uuid> \
-  --owned-file <file-or-directory> \
-  [--owned-file <another-file-or-directory>]
-run_dir=<runs-root>/<lowercase-uuid>
-~~~
-
-After each worker's public-details-first routing evidence is accepted, record the exact
-observed role, model, effort, thread, and working directory. Use one `record-worker`
-call per worker, including parallel non-overlapping workers:
-
-~~~sh
-python3 "$ledger" record-worker \
-  --ledger "$run_dir" \
-  --thread-id <thread-id> \
-  --role <observed-role> \
-  --model <observed-model> \
-  --effort <observed-effort> \
-  --cwd <observed-cwd>
-~~~
-
-Capture every primary-session verification command to a file and record its exit code
-and immutable evidence hash. A non-zero result cannot be accepted:
-
-~~~sh
-python3 "$ledger" record-verification \
-  --ledger "$run_dir" \
-  --command '<exact-command>' \
-  --exit-code <actual-exit-code> \
-  --evidence-file <captured-output-file>
-~~~
-
-Immediately before spawning the final reviewer, capture `before-review`; immediately
-after it returns, capture `after-review`. Record the observed reviewer metadata and its
-single verdict, then run the gate:
-
-~~~sh
-python3 "$ledger" snapshot --ledger "$run_dir" --label before-review
-<spawn the fresh reviewer and capture its exact report>
-python3 "$ledger" snapshot --ledger "$run_dir" --label after-review
-python3 "$ledger" record-review \
-  --ledger "$run_dir" \
-  --thread-id <review-thread-id> \
-  --role floc_loom_sol_reviewer \
-  --model gpt-5.6-sol \
-  --effort high \
-  --cwd <observed-cwd> \
-  --sandbox-policy-type <observed-sandbox-policy> \
-  --permission-profile-type <observed-permission-profile> \
-  --verdict <ship|fix-first|rethink> \
-  --reason '<evidence-based reason>' \
-  --residual-risk '<none or explicit residual risk>'
-python3 "$ledger" accept --ledger "$run_dir"
-~~~
-
-The gate checks role/model/effort pins, verification evidence, review verdict, exact
-before/after repository state, evidence-file integrity, and changed-file scope. It
-requires observed `read-only` isolation by default. Use
-`--allow-behavioral-read-only` only when hard isolation is not required and the review
-reports the broader sandbox as residual risk. That mode must never be described as
-OS-enforced read-only.
+The primary session owns graph state. Start a node only when dependencies are accepted,
+interfaces are settled, its route is declared, and its file ownership does not overlap
+another active node. Add an integration node whenever correctness emerges across nodes
+or frontend/backend boundaries. Worker reports do not advance a node to verified or
+accepted without primary evidence and the route's required gate.
 
 ## Keep architect work in the primary session
 
 Keep these responsibilities in the primary session:
 
 - Resolve requirements and material ambiguity.
-- Choose architecture, interfaces, and decomposition.
-- Select the implementation lane.
-- Write the complete five-part spec.
+- Choose architecture, interfaces, delivery boundary, and route.
+- Write the complete five-part spec and graph node contract.
 - Inspect the actual diff and rerun verification.
-- Judge reviewer feedback and accept the deliverable.
+- Capture the required ledger evidence and judge reviewer feedback.
+- Accept only after the route's machine-checked gate succeeds.
 
-Do not type implementation code, tests, boilerplate, or mechanical configuration in
-the primary session when a lane can do it. If a lane's result is wrong, correct the
-spec and delegate the fix rather than silently repairing it yourself.
+Do not type implementation code, tests, boilerplate, or mechanical configuration in the
+primary session when the selected route delegates that responsibility. If a lane result
+is wrong, correct the specification and delegate the correction rather than silently
+repairing it.
 
-## Route implementation
+## Route implementation lanes
 
 ### Luna: preferred bounded implementation lane
 
-Use Luna Max first for bounded frontend, backend, and full-stack nodes after Sol has
-settled the architecture, interfaces, ownership, constraints, and verification. Luna
-may own feature-level implementation when the node is coherent and the specification
-makes its important behavior and failure cases explicit; it is not limited to
-boilerplate or mechanical edits.
-
-Do not route unsettled design or architecture decisions to Luna. Route unusually
-high-risk security, migration, concurrency, distributed-effects, deep debugging, or
-broad integration work to Terra when it cannot be bounded safely. If design is
-unsettled, stop and return the decision to the studio. After a failed Luna attempt,
-inspect the evidence: correct a genuine specification gap and allow one fresh Luna
-attempt, or escalate immediately when the failure shows a capability/context mismatch.
-Escalate after a corrected Luna attempt also fails.
+Use Luna Max for a `delegate` or `full` node after Sol has settled architecture,
+interfaces, ownership, constraints, and verification. Luna may own coherent feature
+implementation; it is not limited to boilerplate. Do not route unsettled design or
+architecture decisions to Luna. After a failed Luna attempt, inspect evidence: correct
+a genuine specification gap and allow one fresh Luna attempt, or escalate when the
+failure shows a capability/context mismatch. Escalate after a corrected Luna attempt
+also fails.
 
 Spawn a native custom subagent thread with exactly:
 
@@ -262,21 +153,16 @@ agent_type: floc_loom_luna_implementer
 fork_turns: none
 ~~~
 
-Its installed agent file pins GPT-5.6 Luna at max reasoning. Do not include a
-per-spawn model or reasoning field. Confirm the public-details-first runtime evidence,
-using the local inspector only when those details omit model or effort, before
-accepting any work; if it is unavailable or differs, stop the lane rather than falling
-back.
+The installed file pins GPT-5.6 Luna at max reasoning. Do not include per-spawn model
+or reasoning fields. Confirm accepted routing evidence before accepting its work.
 
 ### Terra: capability and high-risk escalation lane
 
-Use Terra when a node cannot be bounded reliably for Luna or correctness depends on
-unusually broad context or technical judgment. Typical cases include subtle
-concurrency, non-trivial algorithms, security-sensitive paths, migration design,
-distributed effects, difficult production debugging, broad refactors, or large
-cross-module integration. Terra is not a design authority. Also escalate when Luna's
-evidence demonstrates a capability/context mismatch or a corrected Luna attempt fails.
-Correct the specification before retrying or escalating.
+Use Terra only on `full` when a node cannot be bounded reliably for Luna or correctness
+depends on unusually broad context or technical judgment: subtle security, migration,
+concurrency, distributed effects, difficult production debugging, broad refactors, or
+large cross-module integration. Terra is not a design authority. If design is
+unsettled, stop and return the decision to the studio.
 
 Spawn a native custom subagent thread with exactly:
 
@@ -285,102 +171,57 @@ agent_type: floc_loom_terra_implementer
 fork_turns: none
 ~~~
 
-Its installed agent file pins GPT-5.6 Terra at max reasoning. Do not include a
-per-spawn model or reasoning field. Confirm the public-details-first runtime evidence,
-using the local inspector only when those details omit model or effort, before
-accepting any work; if it is unavailable or differs, stop the lane rather than falling
-back.
+The installed file pins GPT-5.6 Terra at max reasoning. Do not include per-spawn model
+or reasoning fields. Confirm accepted routing evidence before accepting its work.
 
-### Routing rules
+### Common lane rules
 
-- Route by task shape, not prestige.
+- Route by task shape and declared guarantees, not prestige.
 - Apply the frontend, backend, or full-stack verification profile from the execution
   graph reference when that domain is material.
 - Treat studio-approved design sources as immutable implementation contracts. If a
-  material design decision is missing or conflicting, stop and ask the studio; do not
-  let any model decide it.
-- Use one worker per owned file set or bounded responsibility.
-- State that the worker is not alone in the codebase, must preserve other edits, and
-  must adapt to concurrent changes.
-- Run independent, non-overlapping tasks concurrently when useful. Keep shared-file
-  edits and dependency chains serial.
-- Do not let parallel workers independently invent a shared interface. Settle a contract
-  node first, then integrate against that accepted contract.
-- Do not silently substitute a role, model, or reasoning level. If a requested lane is
-  unavailable, report the limitation and ask before changing lanes.
-- Give a failed lane a corrected spec. Do not repeat an unchanged prompt.
+  material design decision is missing or conflicting, stop and ask the studio; no model
+  may invent, improve, simplify, or reinterpret it.
+- State worker ownership exactly. Workers are not alone in the codebase; they must
+  preserve concurrent edits and adapt to already-present changes.
+- Run independent non-overlapping nodes concurrently only after shared contracts are
+  settled. Keep shared-file edits and dependency chains serial.
+- Do not let parallel workers invent a shared interface. Settle a contract node first,
+  then integrate against that accepted contract.
+- Do not silently substitute a role, model, effort, route, or verification profile.
 
-## Verify every implementation
+## Verify and accept every implementation
 
-Treat worker reports as claims. Before accepting work:
+Treat reports as claims. Before acceptance, inspect the working tree and actual diff,
+confirm only in-scope files changed, rerun the route's verification commands, and
+compare evidence with the objective and interfaces. Run source-mutating normalizers
+before functional verification. Corrections require fresh verification; changed reviewed
+diffs require fresh review evidence.
 
-1. Inspect the working tree and actual diff.
-2. Confirm only in-scope files changed.
-3. Rerun the spec's verification commands in the primary session.
-4. Compare the evidence with the stated objective and interfaces.
-5. Delegate corrections when evidence fails or the diff is wrong.
-6. Ensure the execution ledger contains the worker evidence and successful verification
-   records before spawning the final reviewer.
-7. For a graph, update the node state and invalidate descendant evidence when an
-   upstream interface or base changes.
+For `delegate`, acceptance requires the Luna worker evidence, successful verification,
+and the exact unchanged verified-state binding. For `audit`, primary implementation has
+no worker evidence and acceptance requires fresh Sol review. For `full`, acceptance
+requires one worker plus fresh Sol review. `solo` is outside the ledger and must be
+reclassified before it requires an auxiliary or broader mutation.
 
-Do not call a task complete because a worker says it is complete.
+For an `audit` or `full` final review, use the role-contract final-review packet. It
+applies the conditional security/observability sweep, non-sensitive `COVERAGE`, and
+one-bundle/then-`rethink` rule when triggered. Keep commitment-boundary consultation
+separate: it returns `proceed`, `change`, or `stop` and does not inherit unrelated final
+review coverage.
 
-## Consult Sol at commitment boundaries
-
-Before committing to a consequential architecture, migration, public API, or wide
-refactor, spawn a fresh custom review thread with a requested read-only profile:
+Spawn that fresh final review thread with exactly:
 
 ~~~text
 agent_type: floc_loom_sol_reviewer
 fork_turns: none
 ~~~
 
-Use the commitment-boundary prompt from the role contracts. The installed agent file
-pins Sol at high reasoning and requests a read-only sandbox; do not add a per-spawn
-model or reasoning field. Observe the actual host sandbox and permission profile using
-the same public-details-first procedure. Keep the consult bounded; the primary session
-still makes the decision. If the mandatory preflight or runtime observation fails, stop
-the consult instead of using a different reviewer.
+The installed reviewer file pins GPT-5.6 Sol at high reasoning. Do not add per-spawn
+model or reasoning fields; accept its routing only after the observed role/pin/sandbox
+procedure in the role contracts succeeds.
 
-## Require the final Sol review
-
-After implementation and primary verification, always spawn a new, fresh native
-custom review thread with:
-
-~~~text
-agent_type: floc_loom_sol_reviewer
-fork_turns: none
-~~~
-
-Give it the final-review packet from the role-contract reference. The reviewer is
-role-pinned by its installed file, which requests read-only isolation. Instruct it to
-remain behaviorally read-only, inspect the actual files and diff, then return exactly
-one verdict: ship, fix-first, or rethink.
-
-For independently accepted PR nodes, require a fresh review per PR. After a stacked or
-cross-domain graph is integrated, require a final integration review when combined
-behavior can fail despite individual node approval.
-
-- ship: report completion with verification evidence.
-- fix-first: delegate the named fixes, independently verify them, then obtain a new
-  fresh review.
-- rethink: return to architecture, revise the plan, and do not report completion.
-
-For `ship`, record the review in the execution ledger and run its `accept` command. A
-reviewer report alone is not an acceptance artifact.
-
-Never waive the final review because the change is small. Never let the reviewer
-implement its own fixes. A Sol-on-Sol review is context-clean, not
-model-family-independent; describe it that way when independence matters.
-
-Use the observed sandbox policy type to decide isolation status:
-
-- If it is read-only, isolation is enforced and the review may proceed normally.
-- If the host broadens it, the review may proceed only when the user and task do not
-  require hard isolation, the review prompt explicitly forbids edits, and the parent
-  captures and verifies exact before-and-after repository and artifact state. Report
-  the broader observed sandbox and permission profile as residual risk.
-- If hard isolation is required, the sandbox is unobservable, or any mutation occurs,
-  stop the review lane. Do not claim read-only isolation and do not silently repair or
-  hide the mutation.
+Do not report completion until the route's ledger `accept` gate succeeds (or, for a
+true solo route, the primary session records and verifies its no-ledger boundary). A
+Sol-on-Sol review is context-clean, not model-family-independent; say so when
+independence matters.
