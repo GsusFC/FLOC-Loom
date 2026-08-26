@@ -159,8 +159,9 @@ install_missing() {
     fail "destination changed after preflight and will not be installed: $destination"
   fi
 
-  [ -f "$destination" ] && [ ! -L "$destination" ] && cmp -s "$template" "$destination" \
-    || fail "post-install exactness check failed: $destination"
+  if ! { [ -f "$destination" ] && [ ! -L "$destination" ] && cmp -s "$template" "$destination"; }; then
+    fail "post-install exactness check failed: $destination"
+  fi
   printf '%s\n' "INSTALLED: $destination"
 }
 
@@ -217,8 +218,9 @@ migrate_historical() {
     remove_staged "$staged"
     fail "could not atomically migrate historical template: $destination"
   fi
-  [ -f "$destination" ] && [ ! -L "$destination" ] && cmp -s "$template" "$destination" \
-    || fail "post-migration exactness check failed: $destination"
+  if ! { [ -f "$destination" ] && [ ! -L "$destination" ] && cmp -s "$template" "$destination"; }; then
+    fail "post-migration exactness check failed: $destination"
+  fi
   printf '%s\n' "MIGRATED: $destination"
 }
 
@@ -392,8 +394,9 @@ for role in $selected_roles; do
   agent_file=$(role_file "$role")
   template=$template_dir/$agent_file
   destination=$target_dir/$agent_file
-  [ -f "$destination" ] && [ ! -L "$destination" ] && cmp -s "$template" "$destination" \
-    || fail "post-install exactness check failed: $destination"
+  if ! { [ -f "$destination" ] && [ ! -L "$destination" ] && cmp -s "$template" "$destination"; }; then
+    fail "post-install exactness check failed: $destination"
+  fi
 done
 
 printf '%s\n' "INSTALL PASSED: selected FLOC*Loom agent files exactly match $template_dir."

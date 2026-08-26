@@ -367,7 +367,7 @@ pass "installer role checks, v0.4 migration, conflict preflight, and symlink ref
 grep -Fq 'v040_sol_reviewer_sha256=' "$installer" || fail "installer does not pin the allowlisted v0.4 Sol template"
 grep -Fq 'destination became a symlink after preflight' "$installer" || fail "installer lacks immediate destination-symlink revalidation"
 grep -Fq 'assert_safe_parent_chain' "$installer" || fail "installer lacks parent-symlink defense"
-grep -Fq 'mv -f "$staged" "$destination"' "$installer" || fail "installer lacks atomic historical replacement"
+grep -Fq "mv -f \"\$staged\" \"\$destination\"" "$installer" || fail "installer lacks atomic historical replacement"
 pass "installer shipped migration and symlink defense semantics"
 
 python3 -m unittest "$ledger_tests"
