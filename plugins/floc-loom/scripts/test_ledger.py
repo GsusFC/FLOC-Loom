@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Regression tests for ledger.py using disposable Git repositories."""
+"""Regression tests for the route-aware FLOC*Loom execution ledger."""
 
 from __future__ import annotations
 
+import hashlib
+import json
 import subprocess
 import sys
 import tempfile
@@ -33,6 +35,11 @@ class LedgerTests(unittest.TestCase):
         self.review_id = "33333333-3333-7333-8333-333333333333"
         self.evidence = self.root / "verification.txt"
         self.evidence.write_text("verification passed\n", encoding="utf-8")
+        self.coverage = self.root / "coverage.json"
+        self.coverage_schema = self.read_coverage_schema()
+        self.coverage_categories = [entry["id"] for entry in self.coverage_schema["categories"]]
+        self.coverage_triggers = [entry["id"] for entry in self.coverage_schema["triggers"]]
+        self.write_coverage(triggered=True)
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -57,7 +64,16 @@ class LedgerTests(unittest.TestCase):
             self.fail(f"ledger command failed: {result.stderr}\nstdout={result.stdout}")
         return result
 
-    def init(self, owned: str = "README.md") -> None:
+    def read_coverage_schema(self) -> dict[str, object]:
+        result = self.ledger_cmd("coverage-schema", "--json")
+        try:
+            schema = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            self.fail(f"coverage-schema did not emit JSON: {exc}\nstdout={result.stdout}")
+        self.assertIsInstance(schema, dict)
+        return schema
+
+    def init(self, route: str, owned: str = "README.md") -> None:
         self.ledger_cmd(
             "init",
             "--repo",
@@ -66,11 +82,18 @@ class LedgerTests(unittest.TestCase):
             str(self.ledger_root),
             "--run-id",
             self.run_id,
+            "--route",
+            route,
             "--owned-file",
             owned,
         )
 
-    def record_worker(self) -> None:
+    def record_worker(self, *, role: str = "floc_loom_luna_implementer") -> None:
+        pins = {
+            "floc_loom_luna_implementer": ("gpt-5.6-luna", "max"),
+            "floc_loom_terra_implementer": ("gpt-5.6-terra", "max"),
+        }
+        model, effort = pins[role]
         self.ledger_cmd(
             "record-worker",
             "--ledger",
@@ -78,11 +101,11 @@ class LedgerTests(unittest.TestCase):
             "--thread-id",
             self.worker_id,
             "--role",
-            "floc_loom_luna_implementer",
+            role,
             "--model",
-            "gpt-5.6-luna",
+            model,
             "--effort",
-            "max",
+            effort,
             "--cwd",
             str(self.repo),
         )
@@ -103,7 +126,27 @@ class LedgerTests(unittest.TestCase):
     def snapshot(self, label: str) -> None:
         self.ledger_cmd("snapshot", "--ledger", str(self.ledger), "--label", label)
 
-    def record_review(self, sandbox: str = "read-only", residual_risk: str = "none") -> None:
+    def write_coverage(self, *, triggered: bool, safe: bool = True) -> None:
+        if triggered:
+            coverage = {
+                "schema_version": 1,
+                "sweep_triggered": True,
+                "triggers": [self.coverage_triggers[0]],
+                "inspected": self.coverage_categories,
+                "exclusions": [],
+            }
+        else:
+            reason = "Not applicable to this change." if safe else "See https://example.invalid/private-token"
+            coverage = {
+                "schema_version": 1,
+                "sweep_triggered": False,
+                "triggers": [],
+                "inspected": [],
+                "exclusions": [{"category": category, "reason": reason} for category in self.coverage_categories],
+            }
+        self.coverage.write_text(json.dumps(coverage), encoding="utf-8")
+
+    def record_review(self, *, sandbox: str = "read-only", residual_risk: str = "none") -> None:
         self.ledger_cmd(
             "record-review",
             "--ledger",
@@ -128,24 +171,120 @@ class LedgerTests(unittest.TestCase):
             "diff and evidence inspected",
             "--residual-risk",
             residual_risk,
+            "--coverage-file",
+            str(self.coverage),
         )
 
-    def complete_review_packet(self) -> None:
-        self.init()
+    def complete_delegate_packet(self) -> None:
+        self.init("delegate")
         self.record_worker()
+        self.record_verification()
+        self.snapshot("verified-state")
+
+    def complete_audit_packet(self) -> None:
+        self.init("audit")
         self.record_verification()
         self.snapshot("before-review")
         self.snapshot("after-review")
         self.record_review()
 
-    def test_accepts_complete_hard_isolated_run(self) -> None:
-        self.complete_review_packet()
+    def complete_full_packet(self, *, role: str = "floc_loom_luna_implementer") -> None:
+        self.init("full")
+        self.record_worker(role=role)
+        self.record_verification()
+        self.snapshot("before-review")
+        self.snapshot("after-review")
+        self.record_review()
+
+    def test_requires_route_at_initialization(self) -> None:
+        result = self.ledger_cmd(
+            "init",
+            "--repo",
+            str(self.repo),
+            "--ledger-root",
+            str(self.ledger_root),
+            "--run-id",
+            self.run_id,
+            "--owned-file",
+            "README.md",
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--route", result.stderr)
+
+    def test_accepts_delegate_with_luna_and_verified_state_binding(self) -> None:
+        self.complete_delegate_packet()
         result = self.ledger_cmd("accept", "--ledger", str(self.ledger), "--json")
-        self.assertIn('"hard_isolation": true', result.stdout)
+        self.assertIn('"route": "delegate"', result.stdout)
         self.assertTrue((self.ledger / "acceptance.json").is_file())
 
-    def test_rejects_wrong_worker_pin(self) -> None:
-        self.init()
+    def test_accepts_audit_with_root_verification_and_review_only(self) -> None:
+        self.complete_audit_packet()
+        result = self.ledger_cmd("accept", "--ledger", str(self.ledger), "--json")
+        self.assertIn('"route": "audit"', result.stdout)
+        self.assertNotIn('"hard_isolation": null', result.stdout)
+
+    def test_accepts_full_with_terra_worker(self) -> None:
+        self.complete_full_packet(role="floc_loom_terra_implementer")
+        result = self.ledger_cmd("accept", "--ledger", str(self.ledger), "--json")
+        self.assertIn('"route": "full"', result.stdout)
+
+    def test_delegate_rejects_terra_worker(self) -> None:
+        self.init("delegate")
+        result = self.ledger_cmd(
+            "record-worker",
+            "--ledger",
+            str(self.ledger),
+            "--thread-id",
+            self.worker_id,
+            "--role",
+            "floc_loom_terra_implementer",
+            "--model",
+            "gpt-5.6-terra",
+            "--effort",
+            "max",
+            "--cwd",
+            str(self.repo),
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Terra requires full", result.stderr)
+
+    def test_delegate_rejects_review_evidence(self) -> None:
+        self.init("delegate")
+        result = self.ledger_cmd(
+            "record-review",
+            "--ledger",
+            str(self.ledger),
+            "--thread-id",
+            self.review_id,
+            "--role",
+            "floc_loom_sol_reviewer",
+            "--model",
+            "gpt-5.6-sol",
+            "--effort",
+            "high",
+            "--cwd",
+            str(self.repo),
+            "--sandbox-policy-type",
+            "read-only",
+            "--permission-profile-type",
+            "read-only",
+            "--verdict",
+            "ship",
+            "--reason",
+            "diff and evidence inspected",
+            "--residual-risk",
+            "none",
+            "--coverage-file",
+            str(self.coverage),
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("delegate route forbids Sol review evidence", result.stderr)
+
+    def test_audit_rejects_worker_evidence(self) -> None:
+        self.init("audit")
         result = self.ledger_cmd(
             "record-worker",
             "--ledger",
@@ -155,28 +294,97 @@ class LedgerTests(unittest.TestCase):
             "--role",
             "floc_loom_luna_implementer",
             "--model",
-            "gpt-5.6-sol",
+            "gpt-5.6-luna",
             "--effort",
-            "high",
+            "max",
             "--cwd",
             str(self.repo),
             check=False,
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("role pin mismatch", result.stderr)
+        self.assertIn("audit route rejects worker evidence", result.stderr)
 
-    def test_rejects_review_mutation(self) -> None:
-        self.complete_review_packet()
+    def test_delegate_rejects_post_verification_mutation(self) -> None:
+        self.complete_delegate_packet()
+        (self.repo / "README.md").write_text("changed after verification\n", encoding="utf-8")
+        result = self.ledger_cmd("accept", "--ledger", str(self.ledger), check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("repository changed after the verified-state", result.stderr)
+
+    def test_rejects_changed_verification_evidence(self) -> None:
+        self.complete_delegate_packet()
+        self.evidence.write_text("verification evidence changed\n", encoding="utf-8")
+        result = self.ledger_cmd("accept", "--ledger", str(self.ledger), check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("verification evidence changed", result.stderr)
+
+    def test_delegate_rejects_missing_verified_state(self) -> None:
+        self.init("delegate")
+        self.record_worker()
+        self.record_verification()
+        result = self.ledger_cmd("accept", "--ledger", str(self.ledger), check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("verified-state.json", result.stderr)
+
+    def test_audit_rejects_worker_record_created_outside_cli(self) -> None:
+        self.complete_audit_packet()
+        worker = {
+            "schema_version": 2,
+            "thread_id": self.worker_id,
+            "agent_role": "floc_loom_luna_implementer",
+            "model": "gpt-5.6-luna",
+            "effort": "max",
+            "cwd": str(self.repo),
+        }
+        (self.ledger / "workers" / f"{self.worker_id}.json").write_text(json.dumps(worker), encoding="utf-8")
+        result = self.ledger_cmd("accept", "--ledger", str(self.ledger), check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("audit route requires verification and review evidence with no worker evidence", result.stderr)
+
+    def test_full_rejects_missing_review(self) -> None:
+        self.init("full")
+        self.record_worker()
+        self.record_verification()
+        self.snapshot("before-review")
+        self.snapshot("after-review")
+        result = self.ledger_cmd("accept", "--ledger", str(self.ledger), check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("review.json", result.stderr)
+
+    def test_full_rejects_second_worker(self) -> None:
+        self.init("full")
+        self.record_worker()
+        result = self.ledger_cmd(
+            "record-worker",
+            "--ledger",
+            str(self.ledger),
+            "--thread-id",
+            "44444444-4444-7444-8444-444444444444",
+            "--role",
+            "floc_loom_terra_implementer",
+            "--model",
+            "gpt-5.6-terra",
+            "--effort",
+            "max",
+            "--cwd",
+            str(self.repo),
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("exactly one implementation worker", result.stderr)
+
+    def test_audit_rejects_review_mutation(self) -> None:
+        self.complete_audit_packet()
         (self.repo / "README.md").write_text("changed after review\n", encoding="utf-8")
         result = self.ledger_cmd("accept", "--ledger", str(self.ledger), check=False)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("repository changed after", result.stderr)
+        self.assertIn("repository changed after the after-review", result.stderr)
 
     def test_rejects_out_of_scope_changes(self) -> None:
-        self.init()
+        self.init("full")
         self.record_worker()
-        self.record_verification()
         (self.repo / "other.txt").write_text("out of scope\n", encoding="utf-8")
+        self.record_verification()
         self.snapshot("before-review")
         self.snapshot("after-review")
         self.record_review()
@@ -185,7 +393,7 @@ class LedgerTests(unittest.TestCase):
         self.assertIn("out-of-scope files changed", result.stderr)
 
     def test_behavioral_read_only_requires_explicit_opt_in(self) -> None:
-        self.init()
+        self.init("full")
         self.record_worker()
         self.record_verification()
         self.snapshot("before-review")
@@ -196,6 +404,195 @@ class LedgerTests(unittest.TestCase):
         self.assertIn("--allow-behavioral-read-only", rejected.stderr)
         accepted = self.ledger_cmd("accept", "--ledger", str(self.ledger), "--allow-behavioral-read-only")
         self.assertIn("behavioral read-only", accepted.stdout)
+
+    def test_public_coverage_schema_is_deterministic_and_supports_a_review_packet(self) -> None:
+        repeated = self.read_coverage_schema()
+        self.assertEqual(repeated, self.coverage_schema)
+        self.assertEqual(self.coverage_schema["schema_version"], 1)
+        self.assertEqual(self.coverage_schema["coverage_schema_version"], 1)
+        self.assertEqual(
+            self.coverage_schema["semantic_source"],
+            "references/role-contracts.md#conditional-security-and-observability-sweep",
+        )
+        self.assertEqual(len(self.coverage_triggers), len(set(self.coverage_triggers)))
+        self.assertEqual(len(self.coverage_categories), len(set(self.coverage_categories)))
+        self.assertGreater(len(self.coverage_triggers), 0)
+        self.assertGreater(len(self.coverage_categories), 0)
+
+        core = {key: value for key, value in self.coverage_schema.items() if key != "fingerprint"}
+        expected_fingerprint = "sha256:" + hashlib.sha256(
+            json.dumps(core, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        self.assertEqual(self.coverage_schema["fingerprint"], expected_fingerprint)
+
+        self.init("audit")
+        self.record_verification()
+        self.snapshot("before-review")
+        self.snapshot("after-review")
+        self.record_review()
+        accepted = self.ledger_cmd("accept", "--ledger", str(self.ledger), "--json")
+        self.assertIn('"route": "audit"', accepted.stdout)
+
+    def test_coverage_schema_and_validator_detect_identifier_drift(self) -> None:
+        core = {key: value for key, value in self.coverage_schema.items() if key != "fingerprint"}
+        drifted_core = json.loads(json.dumps(core))
+        drifted_core["categories"][0]["id"] = "identifier-drift"
+        drifted_fingerprint = "sha256:" + hashlib.sha256(
+            json.dumps(drifted_core, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        self.assertNotEqual(self.coverage_schema["fingerprint"], drifted_fingerprint)
+
+        self.init("audit")
+        self.record_verification()
+        self.snapshot("before-review")
+        self.snapshot("after-review")
+        self.coverage.write_text(
+            json.dumps(
+                {
+                    "schema_version": self.coverage_schema["coverage_schema_version"],
+                    "sweep_triggered": True,
+                    "triggers": [self.coverage_triggers[0]],
+                    "inspected": ["identifier-drift", *self.coverage_categories[1:]],
+                    "exclusions": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        rejected = self.ledger_cmd(
+            "record-review",
+            "--ledger",
+            str(self.ledger),
+            "--thread-id",
+            self.review_id,
+            "--role",
+            "floc_loom_sol_reviewer",
+            "--model",
+            "gpt-5.6-sol",
+            "--effort",
+            "high",
+            "--cwd",
+            str(self.repo),
+            "--sandbox-policy-type",
+            "read-only",
+            "--permission-profile-type",
+            "read-only",
+            "--verdict",
+            "ship",
+            "--reason",
+            "diff and evidence inspected",
+            "--residual-risk",
+            "none",
+            "--coverage-file",
+            str(self.coverage),
+            check=False,
+        )
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn("unknown or duplicate category", rejected.stderr)
+
+    def test_coverage_requires_complete_partition_and_safe_exclusions(self) -> None:
+        self.init("audit")
+        self.record_verification()
+        self.snapshot("before-review")
+        self.snapshot("after-review")
+        self.write_coverage(triggered=False, safe=False)
+        result = self.ledger_cmd(
+            "record-review",
+            "--ledger",
+            str(self.ledger),
+            "--thread-id",
+            self.review_id,
+            "--role",
+            "floc_loom_sol_reviewer",
+            "--model",
+            "gpt-5.6-sol",
+            "--effort",
+            "high",
+            "--cwd",
+            str(self.repo),
+            "--sandbox-policy-type",
+            "read-only",
+            "--permission-profile-type",
+            "read-only",
+            "--verdict",
+            "ship",
+            "--reason",
+            "diff and evidence inspected",
+            "--residual-risk",
+            "none",
+            "--coverage-file",
+            str(self.coverage),
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("sensitive value or payload marker", result.stderr)
+
+    def test_accepts_non_triggered_coverage_with_justified_exclusions(self) -> None:
+        self.init("audit")
+        self.record_verification()
+        self.snapshot("before-review")
+        self.snapshot("after-review")
+        self.write_coverage(triggered=False)
+        self.record_review()
+        result = self.ledger_cmd("accept", "--ledger", str(self.ledger), "--json")
+        self.assertIn('"route": "audit"', result.stdout)
+
+    def test_route_escalation_is_monotonic_and_preserves_declaration(self) -> None:
+        self.init("delegate")
+        self.ledger_cmd(
+            "escalate",
+            "--ledger",
+            str(self.ledger),
+            "--to",
+            "full",
+            "--reason",
+            "The node crossed the high-risk integration boundary.",
+        )
+        self.record_worker(role="floc_loom_terra_implementer")
+        self.record_verification()
+        self.snapshot("before-review")
+        self.snapshot("after-review")
+        self.record_review()
+        result = self.ledger_cmd("accept", "--ledger", str(self.ledger), "--json")
+        self.assertIn('"declared_route": "delegate"', result.stdout)
+        self.assertIn('"route": "full"', result.stdout)
+        downgraded = self.ledger_cmd(
+            "escalate",
+            "--ledger",
+            str(self.ledger),
+            "--to",
+            "audit",
+            "--reason",
+            "Attempted downgrade.",
+            check=False,
+        )
+        self.assertNotEqual(downgraded.returncode, 0)
+        self.assertIn("must be monotonic", downgraded.stderr)
+
+    def test_delegate_cannot_escalate_to_audit_after_worker_evidence(self) -> None:
+        self.init("delegate")
+        self.record_worker()
+        result = self.ledger_cmd(
+            "escalate",
+            "--ledger",
+            str(self.ledger),
+            "--to",
+            "audit",
+            "--reason",
+            "Need a fresh review.",
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("cannot escalate to audit after worker evidence", result.stderr)
+
+    def test_immutable_route_declaration_tamper_is_rejected(self) -> None:
+        self.init("delegate")
+        declaration = self.ledger / "route-declaration.json"
+        data = json.loads(declaration.read_text(encoding="utf-8"))
+        data["route"] = "full"
+        declaration.write_text(json.dumps(data), encoding="utf-8")
+        result = self.ledger_cmd("record-verification", "--ledger", str(self.ledger), "--command", "test", "--exit-code", "0", "--evidence-file", str(self.evidence), check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("immutable route declaration integrity check failed", result.stderr)
 
 
 if __name__ == "__main__":
