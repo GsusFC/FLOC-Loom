@@ -6,8 +6,8 @@ set -eu
 plugin_name=floc-loom
 marketplace_name=floc-studio
 default_source=GsusFC/FLOC-Loom
-default_ref=v0.4.0
-default_version=0.4.0
+default_ref=v0.5.0
+default_version=0.5.0
 codex_bin=${CODEX_BIN:-codex}
 source_value=$default_source
 ref_value=$default_ref
@@ -26,9 +26,9 @@ companion custom-agent profiles in one conflict-safe flow.
 Options:
   --local <repo>       Install from a local FLOC*Loom checkout instead of GitHub.
   --source <source>    Marketplace Git source (default: GsusFC/FLOC-Loom).
-  --ref <git-ref>      Exact marketplace Git ref (default: v0.4.0).
+  --ref <git-ref>      Exact marketplace Git ref (default: v0.5.0).
   --target-dir <path>  Override the Codex custom-agent destination.
-  --check              Verify the installed plugin and agents without mutation.
+  --check              Verify the installed v0.5.0 plugin and agents without mutation.
   --help               Show this help text.
 
 The installer never overwrites a differing custom-agent file. Start a new Codex
@@ -38,6 +38,43 @@ EOF
 
 fail() {
   printf '%s\n' "ERROR: $*" >&2
+  exit 1
+}
+
+shell_quote() {
+  case "$1" in
+    '') printf "''" ;;
+    *)
+      printf "'"
+      printf '%s' "$1" | sed "s/'/'\"'\"'/g"
+      printf "'"
+      ;;
+  esac
+}
+
+print_shell_path_command() {
+  printf '%s' "$1"
+  shell_quote "$2"
+  printf '%s\n' "$3"
+}
+
+print_canonical_setup_recovery() {
+  {
+    print_shell_path_command 'RECOVERY: sh ' "$0" ''
+    print_shell_path_command 'THEN: sh ' "$0" ' --check'
+  } >&2
+}
+
+ref_transition_refusal() {
+  printf '%s\n' "ERROR: $*" >&2
+  printf '%s\n' "RECOVERY: Codex cannot change a configured marketplace to another pinned ref with marketplace upgrade." >&2
+  printf '%s\n' "RECOVERY: The following is a deliberate replacement of only Codex's configured $marketplace_name marketplace; it never removes companion-agent files." >&2
+  {
+    print_shell_path_command 'RECOVERY: ' "$codex_bin" " plugin marketplace remove $marketplace_name"
+    print_shell_path_command 'RECOVERY: ' "$codex_bin" " plugin marketplace add $default_source --ref $default_ref"
+    print_shell_path_command 'RECOVERY: ' "$codex_bin" " plugin add $plugin_name@$marketplace_name --json"
+  } >&2
+  print_canonical_setup_recovery
   exit 1
 }
 
@@ -119,7 +156,17 @@ setup_tmp=$(mktemp -d "$tmp_base/floc-loom-setup.XXXXXX") \
   || fail "could not create a disposable setup directory."
 list_json=$setup_tmp/plugin-list.json
 marketplace_json=$setup_tmp/marketplace.json
+marketplace_list_json=$setup_tmp/marketplace-list.json
+marketplace_error=$setup_tmp/marketplace.err
 install_json=$setup_tmp/plugin-install.json
+
+marketplace_configuration_state() {
+  "$codex_bin" plugin marketplace list --json > "$marketplace_list_json" 2>/dev/null || return 2
+  jq -e 'type == "object" and (.marketplaces | type == "array")' "$marketplace_list_json" >/dev/null || return 2
+  jq -e --arg name "$marketplace_name" \
+    'any(.marketplaces[]?; .name == $name)' "$marketplace_list_json" >/dev/null && return 0
+  return 1
+}
 
 run_agent_installer() {
   installed_plugin_dir=$1
@@ -135,6 +182,22 @@ run_agent_installer() {
     sh "$agent_installer"
     sh "$agent_installer" --check
   fi
+}
+
+require_current_plugin_manifest() {
+  installed_plugin_dir=$1
+  manifest=$installed_plugin_dir/.codex-plugin/plugin.json
+  if [ ! -f "$manifest" ] || [ -L "$manifest" ]; then
+    fail "installed plugin is missing a regular manifest: $manifest"
+  fi
+
+  installed_version=$(jq -r 'if (.version | type) == "string" then .version else "<invalid>" end' "$manifest" 2>/dev/null || true)
+  [ -n "$installed_version" ] || installed_version='<unreadable>'
+  if ! jq -e --arg name "$plugin_name" --arg version "$default_version" \
+    '.name == $name and .version == $version' "$manifest" >/dev/null; then
+    ref_transition_refusal "expected installed FLOC*Loom $default_version before using its companion-agent installer; found ${installed_version}."
+  fi
+  printf '%s\n' "$installed_version"
 }
 
 check_agent_installer() {
@@ -158,18 +221,30 @@ if [ "$check_only" -eq 1 ]; then
   installed_count=$(jq -r --arg id "$plugin_selector" \
     '[.installed[] | select(.pluginId == $id and .installed == true and .enabled == true)] | length' \
     "$list_json")
-  [ "$installed_count" = "1" ] \
-    || fail "expected one enabled $plugin_selector installation; found $installed_count."
+  if [ "$installed_count" != "1" ]; then
+    if [ "$installed_count" = "0" ]; then
+      if marketplace_configuration_state; then
+        printf '%s\n' "ERROR: marketplace $marketplace_name is configured, but enabled plugin $plugin_selector is missing or disabled." >&2
+      else
+        marketplace_state=$?
+        if [ "$marketplace_state" = "1" ]; then
+          printf '%s\n' "ERROR: FLOC*Loom marketplace $marketplace_name or enabled plugin $plugin_selector is missing." >&2
+        else
+          fail "could not inspect configured Codex marketplaces while checking $plugin_selector."
+        fi
+      fi
+      print_canonical_setup_recovery
+      exit 1
+    fi
+    fail "expected one enabled $plugin_selector installation; found $installed_count."
+  fi
   installed_plugin_dir=$(jq -r --arg id "$plugin_selector" \
     '.installed[] | select(.pluginId == $id and .installed == true and .enabled == true) | .source.path' \
     "$list_json")
   [ -d "$installed_plugin_dir" ] \
     || fail "installed plugin path is unavailable: $installed_plugin_dir"
-  jq -e --arg name "$plugin_name" '.name == $name and (.version | type == "string")' \
-    "$installed_plugin_dir/.codex-plugin/plugin.json" >/dev/null \
-    || fail "installed plugin manifest has an unexpected name or version."
+  installed_version=$(require_current_plugin_manifest "$installed_plugin_dir")
   check_agent_installer "$installed_plugin_dir"
-  installed_version=$(jq -r '.version' "$installed_plugin_dir/.codex-plugin/plugin.json")
   printf '%s\n' "SETUP CHECK PASSED: FLOC*Loom $installed_version and its companion agents are current."
   exit 0
 fi
@@ -185,7 +260,10 @@ if [ -n "$local_source" ]; then
   [ -f "$local_source/.agents/plugins/marketplace.json" ] \
     || fail "local path is not a FLOC*Loom marketplace root: $local_source"
   source_value=$local_source
-  if ! "$codex_bin" plugin marketplace add "$source_value" --json > "$marketplace_json"; then
+  if ! "$codex_bin" plugin marketplace add "$source_value" --json > "$marketplace_json" 2> "$marketplace_error"; then
+    if grep -Fq 'already added from a different source' "$marketplace_error"; then
+      ref_transition_refusal "Codex reports that marketplace $marketplace_name is configured from a different source/ref and will not replace it automatically."
+    fi
     fail "could not add the local FLOC*Loom marketplace."
   fi
 else
@@ -195,7 +273,10 @@ else
   case "$ref_value" in
     -*) fail "Git ref must not start with '-': $ref_value" ;;
   esac
-  if ! "$codex_bin" plugin marketplace add "$source_value" --ref "$ref_value" --json > "$marketplace_json"; then
+  if ! "$codex_bin" plugin marketplace add "$source_value" --ref "$ref_value" --json > "$marketplace_json" 2> "$marketplace_error"; then
+    if grep -Fq 'already added from a different source' "$marketplace_error"; then
+      ref_transition_refusal "Codex reports that marketplace $marketplace_name is configured from a different source/ref and will not replace it automatically."
+    fi
     fail "could not add FLOC*Loom marketplace source $source_value at $ref_value."
   fi
 fi
@@ -212,14 +293,7 @@ installed_plugin_dir=$(jq -r '.installedPath // empty' "$install_json")
 if [ -z "$installed_plugin_dir" ] || [ ! -d "$installed_plugin_dir" ]; then
   fail "Codex did not report a valid installed plugin path."
 fi
-jq -e --arg name "$plugin_name" '.name == $name and (.version | type == "string")' \
-  "$installed_plugin_dir/.codex-plugin/plugin.json" >/dev/null \
-  || fail "installed plugin manifest has an unexpected name or version."
-installed_version=$(jq -r '.version' "$installed_plugin_dir/.codex-plugin/plugin.json")
-if [ -z "$local_source" ] && [ "$source_value" = "$default_source" ] \
-  && [ "$ref_value" = "$default_ref" ] && [ "$installed_version" != "$default_version" ]; then
-  fail "expected FLOC*Loom $default_version from $default_ref, but Codex installed $installed_version; inspect the configured marketplace before continuing."
-fi
+installed_version=$(require_current_plugin_manifest "$installed_plugin_dir")
 
 run_agent_installer "$installed_plugin_dir"
 
