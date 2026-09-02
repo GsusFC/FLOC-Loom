@@ -78,6 +78,11 @@ when role/model/effort/sandbox/permission evidence is absent or inconsistent.
 
 ## 4. Initialize a route-scoped ledger
 
+Before route selection, complete the minimal-change basis required by
+[SKILL.md](../SKILL.md): observed failure or invariant, existing mechanism inspected,
+semantics to preserve, exact authorized architectural expansion (or `none`), and
+non-goals. A route or Terra escalation never grants architectural expansion.
+
 Create one ledger for each non-solo direct deliverable or graph node, before its first
 mutation or auxiliary spawn. `solo` intentionally has no ledger. Keep the evidence root
 outside the repository:
@@ -140,9 +145,11 @@ python3 "$ledger" record-verification \
   --evidence-file /absolute/path/to/verification-output.txt
 ~~~
 
-A non-zero verification may be recorded for diagnosis but cannot be accepted. Do not
-place request bodies, prompts, credentials, full URLs, environment/configuration values,
-or other sensitive runtime payloads in evidence files intended for review distribution.
+A non-zero verification may be recorded for diagnosis. It never satisfies acceptance
+and does not poison later evidence; acceptance still requires a successful verification
+bound to the exact terminal repository snapshot. Do not place request bodies, prompts,
+credentials, full URLs, environment/configuration values, or other sensitive runtime
+payloads in evidence files intended for review distribution.
 
 ## 6. Accept `delegate`
 
@@ -161,8 +168,10 @@ extra worker, missing verification binding, or out-of-scope change fails closed.
 ## 7. Accept `audit` or `full`
 
 `audit` records no worker. `full` records exactly one Luna or Terra worker. Both record
-primary verification, capture the repository immediately before and after the fresh Sol
-review, and record its verdict:
+primary verification before opening the fresh Sol review boundary. The `before-review`
+command fails unless the route's worker matrix is already complete and a successful
+verification is bound to the current repository state. The `after-review` command fails
+immediately if the reviewer changed that state:
 
 ~~~sh
 python3 "$ledger" snapshot --ledger "$run_dir" --label before-review
@@ -191,7 +200,9 @@ The ledger requires every allowed category to appear exactly once in `inspected`
 a short non-sensitive exclusion for every category. It rejects duplicate/unknown IDs,
 incomplete coverage, multiline justifications, and common payload/value markers.
 
-Record the review and accept:
+Persist only a final `ship` verdict, then accept. `fix-first` and `rethink` are
+orchestration decisions, not acceptance evidence, and must not be written to
+`review.json`:
 
 ~~~sh
 python3 "$ledger" record-review \
@@ -203,7 +214,7 @@ python3 "$ledger" record-review \
   --cwd <observed-cwd> \
   --sandbox-policy-type <observed-sandbox-policy> \
   --permission-profile-type <observed-permission-profile> \
-  --verdict <ship|fix-first|rethink> \
+  --verdict ship \
   --reason '<evidence-based reason>' \
   --residual-risk '<none or explicit residual risk>' \
   --coverage-file /absolute/path/to/review-coverage.json
@@ -218,14 +229,17 @@ OS-enforced isolation.
 ## 8. Handle a review correction
 
 The final-review packet declares `REVIEW CYCLE: initial` or
-`post-fix-first-bundle`. On an initial `fix-first`, group every known blocker for that
-review boundary into one correction bundle, independently verify it, then spawn a fresh
-review with `post-fix-first-bundle`. A newly found blocker there is `rethink`; do not
-run another automatic patch cycle.
+`post-fix-first-bundle`. On an initial `fix-first`, do not call `record-review`. Capture
+`after-review` to prove read-only behavior, group every known blocker for that boundary
+into one correction bundle, apply it, and record fresh verification. Calling
+`before-review` again replaces only the unaccepted review boundary and removes its stale
+`after-review`; then spawn a fresh review with `post-fix-first-bundle`. Persist and
+accept only if that fresh verdict is `ship`. A newly found blocker there is `rethink`;
+do not run another automatic patch cycle.
 
-This workflow deliberately has no native correction-count ledger state machine. The
-packet's boundary and fresh reviewer make the decision auditable without adding a new
-state, flag, or global budget.
+This workflow deliberately has no native correction-count ledger state machine and no
+persisted non-ship review history. The packet's boundary and fresh reviewer make the
+decision auditable without adding a new state, flag, or global budget.
 
 ## 9. Maintain and validate the plugin
 

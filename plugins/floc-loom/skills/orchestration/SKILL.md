@@ -68,6 +68,34 @@ with its executable installer/fresh-task/runtime-inspection exit. Never silently
 back to another role, model, or effort. The custom-agent file—not the spawn call—pins
 each model and reasoning effort.
 
+## Apply the minimal-change architecture gate
+
+Before choosing a route, graph, or implementation lane for a mutation, identify the
+observed failure or invariant and inspect the closest existing mechanism. Use that
+mechanism when it can restore the required behavior without changing its semantics.
+Do not design a replacement merely because a new abstraction would be cleaner.
+
+Reusing an existing mechanism means using its current path and semantics. It does not
+authorize extending, wrapping, versioning, duplicating, or bypassing it, nor adding a
+parallel service, adapter, schema, lock, index, migration, or persistent state.
+
+A new abstraction, public contract, schema/version, migration, index, adapter, service,
+lock, or durable state requires concrete evidence that the existing mechanism cannot
+satisfy the stated invariant and explicit authorization in the task or approved spec.
+Treat adjacent concurrency, scaling, compatibility, migration, and future-proofing
+concerns as non-goals unless the task names them.
+
+Every mutating direct spec or graph node must record:
+
+- the observed failure or invariant;
+- the existing mechanism inspected;
+- the semantics and interfaces that must remain unchanged;
+- the exact authorized architectural expansion, or `none`; and
+- explicit non-goals.
+
+If implementation discovers that the authorized boundary is insufficient, stop and
+return the evidence. Do not expand the architecture in flight.
+
 ## Declare a selective route before work
 
 Read-only discovery and role preflight may precede route selection. For every direct
@@ -123,7 +151,7 @@ accepted without primary evidence and the route's required gate.
 Keep these responsibilities in the primary session:
 
 - Resolve requirements and material ambiguity.
-- Choose architecture, interfaces, delivery boundary, and route.
+- Apply the minimal-change gate, then choose architecture, interfaces, delivery boundary, and route.
 - Write the complete five-part spec and graph node contract.
 - Inspect the actual diff and rerun verification.
 - Capture the required ledger evidence and judge reviewer feedback.
@@ -182,6 +210,10 @@ or reasoning fields. Confirm accepted routing evidence before accepting its work
 - Treat studio-approved design sources as immutable implementation contracts. If a
   material design decision is missing or conflicting, stop and ask the studio; no model
   may invent, improve, simplify, or reinterpret it.
+- Require the worker to inspect the named existing mechanism before editing. Reuse
+  never permits a semantic change or a parallel implementation.
+- Treat `AUTHORIZED ARCHITECTURAL EXPANSION: none` as fail-closed. If more surface is
+  required, stop and return evidence instead of adding it.
 - State worker ownership exactly. Workers are not alone in the codebase; they must
   preserve concurrent edits and adapt to already-present changes.
 - Run independent non-overlapping nodes concurrently only after shared contracts are
@@ -193,10 +225,11 @@ or reasoning fields. Confirm accepted routing evidence before accepting its work
 ## Verify and accept every implementation
 
 Treat reports as claims. Before acceptance, inspect the working tree and actual diff,
-confirm only in-scope files changed, rerun the route's verification commands, and
-compare evidence with the objective and interfaces. Run source-mutating normalizers
-before functional verification. Corrections require fresh verification; changed reviewed
-diffs require fresh review evidence.
+confirm only in-scope files changed, rerun the route's verification commands, compare
+evidence with the objective and interfaces, and reject unapproved architectural surface
+or semantic drift. Run source-mutating normalizers before functional verification.
+Corrections require fresh verification; changed reviewed diffs require fresh review
+evidence.
 
 For `delegate`, acceptance requires the Luna worker evidence, successful verification,
 and the exact unchanged verified-state binding. For `audit`, primary implementation has

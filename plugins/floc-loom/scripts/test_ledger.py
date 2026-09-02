@@ -110,15 +110,15 @@ class LedgerTests(unittest.TestCase):
             str(self.repo),
         )
 
-    def record_verification(self) -> None:
+    def record_verification(self, *, exit_code: int = 0, command: str = "test command") -> None:
         self.ledger_cmd(
             "record-verification",
             "--ledger",
             str(self.ledger),
             "--command",
-            "test command",
+            command,
             "--exit-code",
-            "0",
+            str(exit_code),
             "--evidence-file",
             str(self.evidence),
         )
@@ -547,14 +547,6 @@ class LedgerTests(unittest.TestCase):
             "--reason",
             "The node crossed the high-risk integration boundary.",
         )
-        self.record_worker(role="floc_loom_terra_implementer")
-        self.record_verification()
-        self.snapshot("before-review")
-        self.snapshot("after-review")
-        self.record_review()
-        result = self.ledger_cmd("accept", "--ledger", str(self.ledger), "--json")
-        self.assertIn('"declared_route": "delegate"', result.stdout)
-        self.assertIn('"route": "full"', result.stdout)
         downgraded = self.ledger_cmd(
             "escalate",
             "--ledger",
@@ -567,6 +559,15 @@ class LedgerTests(unittest.TestCase):
         )
         self.assertNotEqual(downgraded.returncode, 0)
         self.assertIn("must be monotonic", downgraded.stderr)
+
+        self.record_worker(role="floc_loom_terra_implementer")
+        self.record_verification()
+        self.snapshot("before-review")
+        self.snapshot("after-review")
+        self.record_review()
+        result = self.ledger_cmd("accept", "--ledger", str(self.ledger), "--json")
+        self.assertIn('"declared_route": "delegate"', result.stdout)
+        self.assertIn('"route": "full"', result.stdout)
 
     def test_delegate_cannot_escalate_to_audit_after_worker_evidence(self) -> None:
         self.init("delegate")
@@ -583,6 +584,174 @@ class LedgerTests(unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("cannot escalate to audit after worker evidence", result.stderr)
+
+    def test_audit_requires_verification_before_review_boundary(self) -> None:
+        self.init("audit")
+        result = self.ledger_cmd(
+            "snapshot",
+            "--ledger",
+            str(self.ledger),
+            "--label",
+            "before-review",
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no verification evidence", result.stderr)
+
+    def test_full_requires_worker_before_review_boundary(self) -> None:
+        self.init("full")
+        self.record_verification()
+        result = self.ledger_cmd(
+            "snapshot",
+            "--ledger",
+            str(self.ledger),
+            "--label",
+            "before-review",
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("exactly one implementation worker", result.stderr)
+
+    def test_active_review_boundary_rejects_new_verification(self) -> None:
+        self.init("audit")
+        self.record_verification()
+        self.snapshot("before-review")
+        result = self.ledger_cmd(
+            "record-verification",
+            "--ledger",
+            str(self.ledger),
+            "--command",
+            "late verification",
+            "--exit-code",
+            "0",
+            "--evidence-file",
+            str(self.evidence),
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("while a final review boundary is active", result.stderr)
+
+    def test_after_review_rejects_reviewer_mutation_immediately(self) -> None:
+        self.init("audit")
+        self.record_verification()
+        self.snapshot("before-review")
+        (self.repo / "README.md").write_text("reviewer mutation\n", encoding="utf-8")
+        result = self.ledger_cmd(
+            "snapshot",
+            "--ledger",
+            str(self.ledger),
+            "--label",
+            "after-review",
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("read-only boundary failed", result.stderr)
+
+    def test_unaccepted_review_boundary_can_restart_after_one_correction(self) -> None:
+        self.init("audit")
+        self.record_verification()
+        self.snapshot("before-review")
+        self.snapshot("after-review")
+
+        (self.repo / "README.md").write_text("bounded correction\n", encoding="utf-8")
+        self.record_verification(command="post-fix verification")
+        self.snapshot("before-review")
+        self.snapshot("after-review")
+        self.record_review()
+
+        result = self.ledger_cmd("accept", "--ledger", str(self.ledger), "--json")
+        self.assertIn('"route": "audit"', result.stdout)
+
+    def test_failed_verification_history_does_not_poison_later_success(self) -> None:
+        self.init("delegate")
+        self.record_worker()
+        self.record_verification(exit_code=1, command="failing test")
+        self.record_verification(command="passing test")
+        self.snapshot("verified-state")
+        result = self.ledger_cmd("accept", "--ledger", str(self.ledger), "--json")
+        self.assertIn('"route": "delegate"', result.stdout)
+
+    def test_non_triggered_coverage_rejects_inspected_categories(self) -> None:
+        self.init("audit")
+        self.record_verification()
+        self.snapshot("before-review")
+        self.snapshot("after-review")
+        coverage = {
+            "schema_version": 1,
+            "sweep_triggered": False,
+            "triggers": [],
+            "inspected": [self.coverage_categories[0]],
+            "exclusions": [
+                {"category": category, "reason": "Not applicable to this change."}
+                for category in self.coverage_categories[1:]
+            ],
+        }
+        self.coverage.write_text(json.dumps(coverage), encoding="utf-8")
+        result = self.ledger_cmd(
+            "record-review",
+            "--ledger",
+            str(self.ledger),
+            "--thread-id",
+            self.review_id,
+            "--role",
+            "floc_loom_sol_reviewer",
+            "--model",
+            "gpt-5.6-sol",
+            "--effort",
+            "high",
+            "--cwd",
+            str(self.repo),
+            "--sandbox-policy-type",
+            "read-only",
+            "--permission-profile-type",
+            "read-only",
+            "--verdict",
+            "ship",
+            "--reason",
+            "diff and evidence inspected",
+            "--residual-risk",
+            "none",
+            "--coverage-file",
+            str(self.coverage),
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must not mark categories as inspected", result.stderr)
+
+    def test_route_cannot_escalate_after_review_boundary_started(self) -> None:
+        self.init("audit")
+        self.record_verification()
+        self.snapshot("before-review")
+        result = self.ledger_cmd(
+            "escalate",
+            "--ledger",
+            str(self.ledger),
+            "--to",
+            "full",
+            "--reason",
+            "Too late.",
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("after a final review boundary has started", result.stderr)
+
+    def test_accepted_run_rejects_additional_evidence(self) -> None:
+        self.complete_delegate_packet()
+        self.ledger_cmd("accept", "--ledger", str(self.ledger))
+        result = self.ledger_cmd(
+            "record-verification",
+            "--ledger",
+            str(self.ledger),
+            "--command",
+            "late evidence",
+            "--exit-code",
+            "0",
+            "--evidence-file",
+            str(self.evidence),
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("already accepted", result.stderr)
 
     def test_immutable_route_declaration_tamper_is_rejected(self) -> None:
         self.init("delegate")

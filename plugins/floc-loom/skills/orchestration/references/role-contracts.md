@@ -48,6 +48,13 @@ DEPENDS ON: <accepted node ids or none>
 DESIGN SOURCE: <studio-approved reference/specification, or not applicable>
 LANE REASON: <why Luna is the bounded first choice, or why Terra escalation is required>
 
+MINIMAL-CHANGE BASIS
+OBSERVED FAILURE OR INVARIANT: <concrete behavior to restore or preserve>
+EXISTING MECHANISM INSPECTED: <closest current path, or none with evidence>
+SEMANTICS AND INTERFACES TO PRESERVE: <current behavior that must not change>
+AUTHORIZED ARCHITECTURAL EXPANSION: none | <exact approved addition>
+NON-GOALS: <adjacent concurrency, scaling, migration, compatibility, or other excluded work>
+
 OBJECTIVE
 <Observable outcome and why it matters.>
 
@@ -91,6 +98,12 @@ GAPS: <unfinished work, ambiguity, or none>
 `delegate` may use only the bounded Luna lane. `full` may use one Luna or Terra lane.
 Do not send a worker on `solo` or `audit`: solo has no auxiliary, while audit means the
 primary session implements and verifies before a fresh Sol review.
+
+The worker must inspect the named existing mechanism before editing. Reuse means its
+current path and semantics; it does not authorize extending, wrapping, versioning,
+duplicating, or bypassing it. When `AUTHORIZED ARCHITECTURAL EXPANSION` is `none`, any
+new contract, schema/version, migration, index, adapter, service, lock, or durable state
+is out of scope. Stop and report evidence when the supplied boundary is insufficient.
 
 ## Execution ledger
 
@@ -272,6 +285,13 @@ INTERFACES AND CONSTRAINTS
 - <Required compatibility, repository rules, safety boundaries, and excluded scope.>
 - <Studio-approved design source and approved deviations, or not applicable.>
 
+MINIMAL-CHANGE BASIS
+OBSERVED FAILURE OR INVARIANT: <the behavior the change was required to restore or preserve>
+EXISTING MECHANISM INSPECTED: <the current path examined before design>
+SEMANTICS AND INTERFACES TO PRESERVE: <the unchanged contract>
+AUTHORIZED ARCHITECTURAL EXPANSION: none | <exact approved addition>
+NON-GOALS: <explicitly excluded adjacent concerns>
+
 VERIFICATION EVIDENCE
 - <command> -> <actual primary-session output evidence>
 - <Relevant artifact or diff inspection> -> <actual evidence>
@@ -284,7 +304,9 @@ CONDITIONAL SECURITY/OBSERVABILITY SWEEP
 REVIEW
 Inspect the actual files and accumulated change set. Judge correctness, completeness,
 regressions, scope discipline, interface preservation, test adequacy, material risk,
-and the conditional sweep when it is triggered. Return exactly one allowed verdict.
+whether the existing mechanism was inspected before design, and whether the diff adds
+unapproved architectural surface or changes reused semantics. Apply the conditional
+sweep when it is triggered. Return exactly one allowed verdict.
 
 SOL REVIEW
 VERDICT: ship | fix-first | rethink
@@ -324,7 +346,8 @@ agent_type: floc_loom_sol_reviewer
 fork_turns: none
 ~~~
 
-Give it the proposed decision, stated goal, constraints, relevant paths, alternatives,
+Give it the proposed decision, stated goal, constraints, relevant paths, the existing
+mechanism inspected, evidence for any requested architectural expansion, alternatives,
 and the one question whose answer changes the plan. Require exactly `proceed`,
 `change`, or `stop`, followed by the decisive reason and largest risk. This is not a
 final review: do **not** require or invent final-review `COVERAGE` for an unrelated

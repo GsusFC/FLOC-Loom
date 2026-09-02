@@ -327,6 +327,15 @@ def load_artifacts(ledger: Path, directory: str) -> list[dict[str, Any]]:
     return artifacts
 
 
+def require_open_run(ledger: Path) -> None:
+    if (ledger / "acceptance.json").exists():
+        fail("ledger run is already accepted and cannot record additional evidence")
+
+
+def review_boundary_active(ledger: Path) -> bool:
+    return (ledger / "before-review.json").exists() and not (ledger / "after-review.json").exists()
+
+
 def active_route(ledger: Path, run: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
     current = str(run["route"])
     escalations = load_artifacts(ledger, "escalations")
@@ -439,6 +448,9 @@ def common_runtime_fields(args: argparse.Namespace) -> dict[str, Any]:
 def cmd_record_worker(args: argparse.Namespace) -> None:
     ledger = Path(args.ledger).expanduser().resolve()
     run = load_run(ledger)
+    require_open_run(ledger)
+    if review_boundary_active(ledger):
+        fail("cannot record worker evidence while a final review boundary is active")
     route, _ = active_route(ledger, run)
     if route == "audit":
         fail("audit route rejects worker evidence; root implementation is the required matrix")
@@ -456,6 +468,10 @@ def cmd_record_worker(args: argparse.Namespace) -> None:
 def cmd_record_verification(args: argparse.Namespace) -> None:
     ledger = Path(args.ledger).expanduser().resolve()
     run = load_run(ledger)
+    require_open_run(ledger)
+    if review_boundary_active(ledger):
+        fail("cannot record verification evidence while a final review boundary is active")
+    command = require_nonempty_string(args.command, "verification command")
     evidence = Path(args.evidence_file).expanduser().resolve()
     if not evidence.is_file():
         fail(f"verification evidence file is unavailable: {evidence}")
@@ -464,7 +480,7 @@ def cmd_record_verification(args: argparse.Namespace) -> None:
     repo = canonical_repo(str(run["repo"]))
     record = {
         "schema_version": SCHEMA_VERSION,
-        "command": args.command,
+        "command": command,
         "exit_code": args.exit_code,
         "evidence_file": str(evidence),
         "evidence_sha256": sha256_file(evidence),
@@ -472,24 +488,59 @@ def cmd_record_verification(args: argparse.Namespace) -> None:
         "recorded_at": now(),
     }
     write_json(ledger / "verifications" / f"{uuid.uuid4()}.json", record, exclusive=True)
-    print(f"VERIFICATION RECORDED: {args.command}")
+    print(f"VERIFICATION RECORDED: {command}")
 
 
 def cmd_snapshot(args: argparse.Namespace) -> None:
     ledger = Path(args.ledger).expanduser().resolve()
     run = load_run(ledger)
+    require_open_run(ledger)
     route, _ = active_route(ledger, run)
+    repo = canonical_repo(str(run["repo"]))
+    current = make_snapshot(repo)
+
     if args.label == "verified-state":
         if route != "delegate":
             fail("verified-state snapshots are reserved for delegate route state binding")
-    elif args.label in {"before-review", "after-review"}:
+        workers = validated_workers(ledger)
+        if len(workers) != 1 or workers[0].get("agent_role") != LUNA_ROLE:
+            fail("delegate verified-state requires exactly one Luna worker evidence record")
+        verifications = validated_verifications(ledger)
+        require_verification_binding(verifications, str(current["snapshot_hash"]), "verified-state")
+        write_json(ledger / "verified-state.json", current, exclusive=True)
+    elif args.label == "before-review":
         if route not in {"audit", "full"}:
             fail("review snapshots require audit or full route")
+        if (ledger / "review.json").exists():
+            fail("accepted review evidence already exists; the review boundary is closed")
+        before_path = ledger / "before-review.json"
+        after_path = ledger / "after-review.json"
+        if before_path.exists() and not after_path.exists():
+            fail("a final review boundary is already active")
+        require_review_prerequisites(ledger, route, str(current["snapshot_hash"]))
+        if after_path.exists():
+            try:
+                after_path.unlink()
+            except OSError as exc:
+                fail(f"cannot clear the unaccepted after-review snapshot: {exc}")
+        write_json(before_path, current)
+    elif args.label == "after-review":
+        if route not in {"audit", "full"}:
+            fail("review snapshots require audit or full route")
+        if (ledger / "review.json").exists():
+            fail("accepted review evidence already exists; the review boundary is closed")
+        before_path = ledger / "before-review.json"
+        after_path = ledger / "after-review.json"
+        if after_path.exists():
+            fail("after-review snapshot already exists for the active boundary")
+        before = read_json(before_path)
+        validate_snapshot(before, before_path)
+        if current["snapshot_hash"] != before["snapshot_hash"]:
+            fail("review changed repository/artifact state; read-only boundary failed")
+        write_json(after_path, current, exclusive=True)
     else:
         fail("snapshot label must be verified-state, before-review, or after-review")
-    repo = canonical_repo(str(run["repo"]))
-    target = ledger / f"{args.label}.json"
-    write_json(target, make_snapshot(repo), exclusive=True)
+
     print(f"SNAPSHOT RECORDED: {args.label}")
 
 
@@ -527,6 +578,8 @@ def validate_coverage(value: dict[str, Any]) -> None:
         fail("coverage inspected must be a list of category identifiers")
     if len(set(inspected)) != len(inspected) or any(item not in COVERAGE_CATEGORIES for item in inspected):
         fail("coverage inspected contains an unknown or duplicate category")
+    if not triggered and inspected:
+        fail("non-triggered coverage must not mark categories as inspected")
 
     exclusions = value.get("exclusions")
     if not isinstance(exclusions, list):
@@ -564,9 +617,12 @@ def cmd_coverage_schema(args: argparse.Namespace) -> None:
 def cmd_record_review(args: argparse.Namespace) -> None:
     ledger = Path(args.ledger).expanduser().resolve()
     run = load_run(ledger)
+    require_open_run(ledger)
     route, _ = active_route(ledger, run)
     if route not in {"audit", "full"}:
         fail("delegate route forbids Sol review evidence; its acceptance uses verified-state binding")
+    if args.verdict != "ship":
+        fail("record-review persists only a final ship verdict; handle fix-first or rethink before persistence")
     require_review_pin(args.role, args.model, args.effort)
     runtime = common_runtime_fields(args)
     if not args.sandbox_policy_type:
@@ -583,6 +639,9 @@ def cmd_record_review(args: argparse.Namespace) -> None:
     after = read_json(after_path)
     validate_snapshot(before, before_path)
     validate_snapshot(after, after_path)
+    if before["snapshot_hash"] != after["snapshot_hash"]:
+        fail("review changed repository/artifact state; read-only boundary failed")
+    require_review_prerequisites(ledger, route, str(before["snapshot_hash"]))
     coverage_path = Path(args.coverage_file).expanduser().resolve()
     if not coverage_path.is_file():
         fail(f"review coverage file is unavailable: {coverage_path}")
@@ -590,6 +649,7 @@ def cmd_record_review(args: argparse.Namespace) -> None:
     record = {
         "schema_version": SCHEMA_VERSION,
         **runtime,
+        "route": route,
         "verdict": args.verdict,
         "reason": args.reason,
         "residual_risk": args.residual_risk,
@@ -605,6 +665,9 @@ def cmd_record_review(args: argparse.Namespace) -> None:
 def cmd_escalate(args: argparse.Namespace) -> None:
     ledger = Path(args.ledger).expanduser().resolve()
     run = load_run(ledger)
+    require_open_run(ledger)
+    if (ledger / "before-review.json").exists():
+        fail("cannot escalate after a final review boundary has started")
     current, escalations = active_route(ledger, run)
     target = args.to_route
     if target not in LEDGER_ROUTES or ROUTE_RANK[target] <= ROUTE_RANK[current]:
@@ -657,8 +720,10 @@ def validated_verifications(ledger: Path) -> list[dict[str, Any]]:
     for verification in verifications:
         if verification.get("schema_version") != SCHEMA_VERSION:
             fail("verification evidence has an unsupported schema")
-        if not isinstance(verification.get("exit_code"), int) or verification["exit_code"] != 0:
-            fail(f"verification did not pass: {verification.get('command', '<unknown>')}")
+        exit_code = verification.get("exit_code")
+        if not isinstance(exit_code, int) or exit_code < 0:
+            fail(f"verification has an invalid exit code: {verification.get('command', '<unknown>')}")
+        require_nonempty_string(verification.get("command"), "verification command")
         evidence = Path(str(verification.get("evidence_file", "")))
         if not evidence.is_file():
             fail(f"verification evidence file disappeared: {evidence}")
@@ -671,11 +736,30 @@ def validated_verifications(ledger: Path) -> list[dict[str, Any]]:
 
 
 def require_verification_binding(verifications: list[dict[str, Any]], snapshot_hash: str, label: str) -> None:
-    if not any(verification.get("repository_snapshot_hash") == snapshot_hash for verification in verifications):
+    if not any(
+        verification.get("exit_code") == 0
+        and verification.get("repository_snapshot_hash") == snapshot_hash
+        for verification in verifications
+    ):
         fail(f"no successful verification is bound to the exact {label} repository state")
 
 
-def validated_review(ledger: Path, before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+def require_review_prerequisites(ledger: Path, route: str, snapshot_hash: str) -> None:
+    workers = validated_workers(ledger)
+    if route == "audit" and workers:
+        fail("audit review requires no worker evidence")
+    if route == "full" and len(workers) != 1:
+        fail("full review requires exactly one implementation worker evidence record")
+    verifications = validated_verifications(ledger)
+    require_verification_binding(verifications, snapshot_hash, "before-review")
+
+
+def validated_review(
+    ledger: Path,
+    before: dict[str, Any],
+    after: dict[str, Any],
+    expected_route: str,
+) -> dict[str, Any]:
     review_path = ledger / "review.json"
     review = read_json(review_path)
     if review.get("schema_version") != SCHEMA_VERSION:
@@ -688,6 +772,8 @@ def validated_review(ledger: Path, before: dict[str, Any], after: dict[str, Any]
         fail("review evidence is missing reason")
     if not review.get("residual_risk"):
         fail("review evidence is missing residual risk")
+    if review.get("route") != expected_route:
+        fail("review evidence was recorded for a different active route")
     if review.get("verdict") != "ship":
         fail(f"final Sol review is not ship: {review.get('verdict')}")
     if not review.get("permission_profile_type"):
@@ -719,6 +805,7 @@ def check_scope(run: dict[str, Any], initial: dict[str, Any], current: dict[str,
 def cmd_accept(args: argparse.Namespace) -> None:
     ledger = Path(args.ledger).expanduser().resolve()
     run = load_run(ledger)
+    require_open_run(ledger)
     route, escalations = active_route(ledger, run)
     initial_path = ledger / "initial-state.json"
     initial = read_json(initial_path)
@@ -777,7 +864,7 @@ def cmd_accept(args: argparse.Namespace) -> None:
         validate_snapshot(before, before_path)
         validate_snapshot(after, after_path)
         require_verification_binding(verifications, str(before["snapshot_hash"]), "before-review")
-        review = validated_review(ledger, before, after)
+        review = validated_review(ledger, before, after, route)
         if before["snapshot_hash"] != after["snapshot_hash"]:
             fail("review changed repository/artifact state; read-only acceptance failed")
 
@@ -872,7 +959,7 @@ def build_parser() -> argparse.ArgumentParser:
     review = subparsers.add_parser("record-review", help="record the fresh Sol review")
     review.add_argument("--ledger", required=True)
     add_runtime_arguments(review)
-    review.add_argument("--verdict", required=True, choices=("ship", "fix-first", "rethink"))
+    review.add_argument("--verdict", required=True, choices=("ship",))
     review.add_argument("--reason", required=True)
     review.add_argument("--residual-risk", required=True)
     review.add_argument("--coverage-file", required=True)

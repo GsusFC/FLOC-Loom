@@ -24,6 +24,11 @@ DELIVERY BOUNDARY: task | commit | PR
 DEPENDS ON: <node ids or none>
 OWNED FILES: <exact non-overlapping paths>
 INTERFACES: <types, API contracts, schemas, events, assets, or none>
+OBSERVED FAILURE OR INVARIANT: <concrete behavior to restore or preserve>
+EXISTING MECHANISM: <closest current path inspected>
+SEMANTICS TO PRESERVE: <current behavior and interfaces that remain unchanged>
+AUTHORIZED ARCHITECTURAL EXPANSION: none | <exact approved addition>
+NON-GOALS: <explicitly excluded adjacent concerns>
 DESIGN SOURCE: <studio-approved reference/specification, or not applicable>
 RISK: low | medium | high
 ROUTE: solo | delegate | audit | full
@@ -34,7 +39,8 @@ STATUS: blocked | ready | active | verified | accepted
 ~~~
 
 Reject a proposed graph when it contains a cycle, hides a shared mutable interface,
-assigns overlapping files to concurrent nodes, omits a route, or lacks a final
+assigns overlapping files to concurrent nodes, omits a route or minimal-change basis,
+authorizes architectural expansion without evidence and task approval, or lacks a final
 integration node for changes whose behavior only emerges across boundaries.
 
 ## Choose the delivery boundary
@@ -83,6 +89,8 @@ and acceptance criteria. Start with Luna when every condition below is true:
   security, migrations, concurrency, distributed effects, or broad integration.
 
 Use Terra only on `full` before implementation when one condition is false or unknown.
+Terra escalation does not authorize a new abstraction or semantic change; it remains
+bound by the node's approved minimal-change basis.
 If a Luna attempt exposes a correctable specification gap, Sol may correct the
 specification and make one fresh Luna attempt. Escalate to Terra when the failure shows
 a capability/context mismatch, or when the corrected Luna attempt also fails. Never

@@ -73,12 +73,19 @@ post-currentness diagnostic; it cannot establish that the marketplace plugin is 
 
 1. **Read-only discovery and role preflight.** Confirm the primary Sol/High session,
    exact installed roles, and actual native routing metadata.
-2. **Declare one route per direct deliverable or graph node** before its first mutation
+2. **Apply the minimal-change gate.** Identify the observed failure or invariant,
+   inspect the closest existing mechanism, and state what must remain unchanged.
+3. **Declare one route per direct deliverable or graph node** before its first mutation
    or auxiliary spawn. A route can only escalate.
-3. **Implement and verify.** The primary session inspects the real diff and reruns the
+4. **Implement and verify.** The primary session inspects the real diff and reruns the
    required checks; worker reports are evidence claims, not acceptance.
-4. **Accept through the route gate.** The ledger records immutable route/evidence state
+5. **Accept through the route gate.** The ledger records immutable route/evidence state
    for every non-solo route. `solo` remains a tightly bounded primary-only exception.
+
+Reusing an existing mechanism means using its current path and semantics. It does not
+authorize a wrapper, new version, parallel adapter/service, schema, lock, index,
+migration, or durable state. Architectural expansion needs concrete evidence and
+explicit approval in the task or spec; adjacent future-proofing remains a non-goal.
 
 | Route | Tradeoff | Required acceptance |
 |---|---|---|
@@ -97,7 +104,9 @@ The final review conditionally emits non-sensitive `COVERAGE` evidence. It recor
 which review categories were inspected or excluded, never payloads, complete URLs,
 credentials, bodies, prompts, tokens, environment values, or configuration values. A
 review boundary gets one bundled `fix-first` correction; a new blocker in the fresh
-post-bundle review is `rethink`, not a loop-until-clean patch cycle.
+post-bundle review is `rethink`, not a loop-until-clean patch cycle. The ledger stores
+only the final `ship` review as acceptance evidence. A non-ship verdict is handled
+before persistence, then a corrected and reverified diff starts a fresh review boundary.
 The installed ledger's `coverage-schema --json` command is the public exact mapping for
 coverage IDs and artifact fields; do not copy identifiers from implementation source.
 

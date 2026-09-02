@@ -203,6 +203,9 @@ required = {
         "references/role-contracts.md",
         "references/operations.md",
         "references/execution-graphs.md",
+        "Apply the minimal-change architecture gate",
+        "Reusing an existing mechanism means using its current path and semantics.",
+        "AUTHORIZED ARCHITECTURAL EXPANSION",
         "Declare a selective route before work",
         "solo",
         "delegate",
@@ -219,6 +222,9 @@ required = {
         "fork_turns: none",
     ),
     "contracts": (
+        "MINIMAL-CHANGE BASIS",
+        "EXISTING MECHANISM INSPECTED",
+        "AUTHORIZED ARCHITECTURAL EXPANSION",
         "Conditional security and observability sweep",
         "provider/client I/O",
         "logging or telemetry",
@@ -243,6 +249,8 @@ required = {
     ),
     "operations": (
         "This reference owns executable workflow mechanics",
+        "A route or Terra escalation never grants architectural expansion.",
+        "Persist only a final `ship` verdict",
         "--check-role luna",
         "--route <delegate|audit|full>",
         "python3 \"$ledger\" escalate",
@@ -253,6 +261,8 @@ required = {
     ),
     "graphs": (
         "ROUTE: solo | delegate | audit | full",
+        "OBSERVED FAILURE OR INVARIANT:",
+        "AUTHORIZED ARCHITECTURAL EXPANSION:",
         "LANE: none | Luna | Terra",
         "one-auxiliary",
         "Integration nodes and independently accepted PR nodes must choose `audit` or `full`",
@@ -370,7 +380,7 @@ grep -Fq 'assert_safe_parent_chain' "$installer" || fail "installer lacks parent
 grep -Fq "mv -f \"\$staged\" \"\$destination\"" "$installer" || fail "installer lacks atomic historical replacement"
 pass "installer shipped migration and symlink defense semantics"
 
-python3 -m unittest "$ledger_tests"
+(cd "$script_dir" && python3 -m unittest test_ledger)
 pass "route-aware ledger matrices, coverage validation, escalation, and state binding"
 
 # Setup's fake Codex fixture guards that the shipped v0.5 setup script pins the same
@@ -535,8 +545,9 @@ pass "unified setup and v0.5 plugin fixture"
 default_source=$(sed -n 's/^default_source=//p' "$setup")
 default_ref=$(sed -n 's/^default_ref=//p' "$setup")
 default_version=$(sed -n 's/^default_version=//p' "$setup")
-test -n "$default_source" && test -n "$default_ref" && test -n "$default_version" \
-  || fail "setup defaults are unavailable to the ref-transition fixture"
+if [ -z "$default_source" ] || [ -z "$default_ref" ] || [ -z "$default_version" ]; then
+  fail "setup defaults are unavailable to the ref-transition fixture"
+fi
 
 # Reuse the shipped exact historical fixture and bind it to the installer's allowlisted
 # hash. That keeps this stateful setup test anchored to the same v0.4 migration input.

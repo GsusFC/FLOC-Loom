@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.0
+
+- Added selective `solo`, `delegate`, `audit`, and `full` routes with monotonic
+  escalation and route-aware acceptance evidence.
+- Added a minimal-change architecture gate that requires inspection of the closest
+  existing mechanism and forbids semantic expansion without evidence and approval.
+- Bound final review to the completed worker/verification matrix and exact review
+  snapshot before persisting acceptance evidence.
+- Made one bundled `fix-first` correction operational without adding a correction-count
+  state machine; only the final `ship` review is persisted.
+- Allowed diagnostic failed-verification history while still requiring a successful
+  verification bound to the terminal repository state.
+- Added conditional non-sensitive security/observability coverage, safer role migration,
+  portable setup recovery, and Linux/macOS verification.
+
 ## 0.4.0
 
 - Renamed the independently maintained workflow to FLOC*Loom, with the technical
