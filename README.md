@@ -100,9 +100,10 @@ that reaches the review-trigger surfaces defined in the role contracts also uses
 observability-sensitive changes from bypassing final review through a reviewer-free
 route.
 
-The final review conditionally emits non-sensitive `COVERAGE` evidence. It records
-which review categories were inspected or excluded, never payloads, complete URLs,
-credentials, bodies, prompts, tokens, environment values, or configuration values. A
+Every final review emits non-sensitive `COVERAGE` evidence. When the conditional sweep
+does not trigger, it records no triggers or inspected categories and justifies every
+category exclusion. It never records payloads, complete URLs, credentials, bodies,
+prompts, tokens, environment values, or configuration values. A
 review boundary gets one bundled `fix-first` correction; a new blocker in the fresh
 post-bundle review is `rethink`, not a loop-until-clean patch cycle. The ledger stores
 only the final `ship` review as acceptance evidence. A non-ship verdict is handled

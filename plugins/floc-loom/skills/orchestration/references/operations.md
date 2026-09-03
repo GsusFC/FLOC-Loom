@@ -131,16 +131,17 @@ python3 "$ledger" record-worker \
   --cwd <observed-cwd>
 ~~~
 
-Capture each primary-session verification command in an evidence file outside the
-repository, then record the actual exit code. `record-verification` hashes that file
-and binds the evidence to the repository snapshot visible at recording time:
+Capture each primary-session verification output in an evidence file outside the
+repository, then record a short non-sensitive label and the actual exit code.
+`record-verification` hashes the file and binds the evidence to the repository snapshot
+visible at recording time. It deliberately does not persist the raw command:
 
 ~~~sh
 <exact-verification-command> > /absolute/path/to/verification-output.txt 2>&1
 exit_code=$?
 python3 "$ledger" record-verification \
   --ledger "$run_dir" \
-  --command '<exact-verification-command>' \
+  --label 'focused tests' \
   --exit-code "$exit_code" \
   --evidence-file /absolute/path/to/verification-output.txt
 ~~~

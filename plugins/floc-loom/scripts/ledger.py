@@ -471,7 +471,7 @@ def cmd_record_verification(args: argparse.Namespace) -> None:
     require_open_run(ledger)
     if review_boundary_active(ledger):
         fail("cannot record verification evidence while a final review boundary is active")
-    command = require_nonempty_string(args.command, "verification command")
+    label = require_nonempty_string(args.label, "verification label")
     evidence = Path(args.evidence_file).expanduser().resolve()
     if not evidence.is_file():
         fail(f"verification evidence file is unavailable: {evidence}")
@@ -480,7 +480,7 @@ def cmd_record_verification(args: argparse.Namespace) -> None:
     repo = canonical_repo(str(run["repo"]))
     record = {
         "schema_version": SCHEMA_VERSION,
-        "command": command,
+        "label": label,
         "exit_code": args.exit_code,
         "evidence_file": str(evidence),
         "evidence_sha256": sha256_file(evidence),
@@ -488,7 +488,7 @@ def cmd_record_verification(args: argparse.Namespace) -> None:
         "recorded_at": now(),
     }
     write_json(ledger / "verifications" / f"{uuid.uuid4()}.json", record, exclusive=True)
-    print(f"VERIFICATION RECORDED: {command}")
+    print(f"VERIFICATION RECORDED: {label}")
 
 
 def cmd_snapshot(args: argparse.Namespace) -> None:
@@ -722,8 +722,8 @@ def validated_verifications(ledger: Path) -> list[dict[str, Any]]:
             fail("verification evidence has an unsupported schema")
         exit_code = verification.get("exit_code")
         if not isinstance(exit_code, int) or exit_code < 0:
-            fail(f"verification has an invalid exit code: {verification.get('command', '<unknown>')}")
-        require_nonempty_string(verification.get("command"), "verification command")
+            fail(f"verification has an invalid exit code: {verification.get('label', '<unknown>')}")
+        require_nonempty_string(verification.get("label"), "verification label")
         evidence = Path(str(verification.get("evidence_file", "")))
         if not evidence.is_file():
             fail(f"verification evidence file disappeared: {evidence}")
@@ -944,9 +944,9 @@ def build_parser() -> argparse.ArgumentParser:
     add_runtime_arguments(worker)
     worker.set_defaults(function=cmd_record_worker)
 
-    verification = subparsers.add_parser("record-verification", help="record a verification command and immutable evidence hash")
+    verification = subparsers.add_parser("record-verification", help="record a safe verification label and immutable evidence hash")
     verification.add_argument("--ledger", required=True)
-    verification.add_argument("--command", required=True)
+    verification.add_argument("--label", required=True)
     verification.add_argument("--exit-code", required=True, type=int)
     verification.add_argument("--evidence-file", required=True)
     verification.set_defaults(function=cmd_record_verification)

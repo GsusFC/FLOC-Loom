@@ -110,13 +110,13 @@ class LedgerTests(unittest.TestCase):
             str(self.repo),
         )
 
-    def record_verification(self, *, exit_code: int = 0, command: str = "test command") -> None:
+    def record_verification(self, *, exit_code: int = 0, label: str = "focused tests") -> None:
         self.ledger_cmd(
             "record-verification",
             "--ledger",
             str(self.ledger),
-            "--command",
-            command,
+            "--label",
+            label,
             "--exit-code",
             str(exit_code),
             "--evidence-file",
@@ -195,6 +195,14 @@ class LedgerTests(unittest.TestCase):
         self.snapshot("before-review")
         self.snapshot("after-review")
         self.record_review()
+
+    def test_verification_persists_label_without_raw_command(self) -> None:
+        self.init("delegate")
+        self.record_verification(label="focused checkpoint tests")
+        verification_path = next((self.ledger / "verifications").glob("*.json"))
+        verification = json.loads(verification_path.read_text(encoding="utf-8"))
+        self.assertEqual(verification["label"], "focused checkpoint tests")
+        self.assertNotIn("command", verification)
 
     def test_requires_route_at_initialization(self) -> None:
         result = self.ledger_cmd(
@@ -620,7 +628,7 @@ class LedgerTests(unittest.TestCase):
             "record-verification",
             "--ledger",
             str(self.ledger),
-            "--command",
+            "--label",
             "late verification",
             "--exit-code",
             "0",
@@ -654,7 +662,7 @@ class LedgerTests(unittest.TestCase):
         self.snapshot("after-review")
 
         (self.repo / "README.md").write_text("bounded correction\n", encoding="utf-8")
-        self.record_verification(command="post-fix verification")
+        self.record_verification(label="post-fix verification")
         self.snapshot("before-review")
         self.snapshot("after-review")
         self.record_review()
@@ -665,8 +673,8 @@ class LedgerTests(unittest.TestCase):
     def test_failed_verification_history_does_not_poison_later_success(self) -> None:
         self.init("delegate")
         self.record_worker()
-        self.record_verification(exit_code=1, command="failing test")
-        self.record_verification(command="passing test")
+        self.record_verification(exit_code=1, label="failing test")
+        self.record_verification(label="passing test")
         self.snapshot("verified-state")
         result = self.ledger_cmd("accept", "--ledger", str(self.ledger), "--json")
         self.assertIn('"route": "delegate"', result.stdout)
@@ -742,7 +750,7 @@ class LedgerTests(unittest.TestCase):
             "record-verification",
             "--ledger",
             str(self.ledger),
-            "--command",
+            "--label",
             "late evidence",
             "--exit-code",
             "0",
@@ -759,7 +767,7 @@ class LedgerTests(unittest.TestCase):
         data = json.loads(declaration.read_text(encoding="utf-8"))
         data["route"] = "full"
         declaration.write_text(json.dumps(data), encoding="utf-8")
-        result = self.ledger_cmd("record-verification", "--ledger", str(self.ledger), "--command", "test", "--exit-code", "0", "--evidence-file", str(self.evidence), check=False)
+        result = self.ledger_cmd("record-verification", "--ledger", str(self.ledger), "--label", "test", "--exit-code", "0", "--evidence-file", str(self.evidence), check=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("immutable route declaration integrity check failed", result.stderr)
 

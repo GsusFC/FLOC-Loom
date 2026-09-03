@@ -12,6 +12,7 @@
   state machine; only the final `ship` review is persisted.
 - Allowed diagnostic failed-verification history while still requiring a successful
   verification bound to the terminal repository state.
+- Replaced persisted raw verification commands with short non-sensitive labels.
 - Added conditional non-sensitive security/observability coverage, safer role migration,
   portable setup recovery, and Linux/macOS verification.
 
