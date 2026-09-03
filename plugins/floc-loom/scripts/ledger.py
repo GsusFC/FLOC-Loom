@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Fail-closed execution ledger for FLOC*Loom runs.
+"""Fail-closed, route-aware execution ledger for FLOC*Loom runs.
 
-The Codex host remains responsible for spawning native agents. This ledger makes
-the evidence needed for acceptance explicit and machine-checkable: observed role
-pins, verification results, review metadata, read-only state snapshots, and the
-allowed file set.
+The Codex host remains responsible for spawning native agents. This ledger makes the
+acceptance evidence for one direct deliverable or graph node explicit and
+machine-checkable. It records an immutable route declaration, observed role pins,
+verification evidence, review metadata, repository snapshots, and the allowed file
+set. ``solo`` is deliberately outside this ledger: it cannot be used to launder a
+mutation or auxiliary-agent run through a weaker acceptance gate.
 """
 
 from __future__ import annotations
@@ -19,10 +21,12 @@ import subprocess
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+COVERAGE_SCHEMA_VERSION = 1
+COVERAGE_DISCOVERY_SCHEMA_VERSION = 1
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 ROLE_PINS = {
     "floc_loom_luna_implementer": {"model": "gpt-5.6-luna", "effort": "max"},
@@ -30,9 +34,56 @@ ROLE_PINS = {
     "floc_loom_sol_reviewer": {"model": "gpt-5.6-sol", "effort": "high"},
 }
 REVIEW_ROLE = "floc_loom_sol_reviewer"
+LUNA_ROLE = "floc_loom_luna_implementer"
+TERRA_ROLE = "floc_loom_terra_implementer"
+LEDGER_ROUTES = ("delegate", "audit", "full")
+ROUTE_RANK = {"delegate": 1, "audit": 2, "full": 3}
+
+# These identifiers intentionally describe review coverage without recording a
+# payload, endpoint, prompt, credential, environment value, or configuration value.
+# ``coverage-schema --json`` is the public, exact mapping. The adjacent semantic text
+# deliberately matches the role-contract source so the shipped verifier can bind the
+# machine allowlist to the human review contract without duplicating identifiers there.
+COVERAGE_TRIGGER_DEFINITIONS = (
+    ("provider-client-io", "provider/client I/O"),
+    ("logging", "logging"),
+    ("telemetry", "telemetry"),
+    ("exception-handling", "exception handling"),
+    ("schemas", "schemas"),
+    ("serialization", "serialization"),
+    ("configuration", "configuration"),
+    ("urls", "URLs"),
+    ("credentials", "credentials"),
+    ("transport-debugging", "transport debugging"),
+)
+COVERAGE_CATEGORY_DEFINITIONS = (
+    ("ingress-parsing-validation", "Ingress, parsing, validation, and serialization."),
+    (
+        "control-flow-success-exception-fallback-cache-early-return",
+        "Success, exception, fallback, cache, and early-return control flow.",
+    ),
+    (
+        "observability-sinks-logs-failure-records-usage-summaries-transport-debug",
+        "Application logs, failure records, usage observations, summaries, and transport/debug sinks.",
+    ),
+    ("configuration-url-metadata", "Configuration-derived endpoint and URL metadata."),
+    (
+        "sequential-state-safe-default-transitions",
+        "Stale state across sequential calls plus safe/default transitions.",
+    ),
+)
+COVERAGE_TRIGGERS = frozenset(identifier for identifier, _ in COVERAGE_TRIGGER_DEFINITIONS)
+COVERAGE_CATEGORIES = frozenset(identifier for identifier, _ in COVERAGE_CATEGORY_DEFINITIONS)
+SENSITIVE_COVERAGE_RE = re.compile(
+    r"(?:https?://|www\.|api[ _-]?key|secret|password|authorization|bearer|"
+    r"credential|token|prompt|(?:request|response)[ _-]?body|"
+    r"(?:environment|env)[ _-]?(?:value|variable)|"
+    r"config(?:uration)?[ _-]?(?:value|secret)|=)",
+    re.IGNORECASE,
+)
 
 
-def fail(message: str) -> "NoReturn":
+def fail(message: str) -> NoReturn:
     raise SystemExit(f"ERROR: {message}")
 
 
@@ -46,6 +97,32 @@ def canonical_json(value: Any) -> bytes:
 
 def sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def coverage_schema_document() -> dict[str, Any]:
+    """Return the public, deterministic coverage-ID and artifact contract."""
+    core = {
+        "schema_version": COVERAGE_DISCOVERY_SCHEMA_VERSION,
+        "coverage_schema_version": COVERAGE_SCHEMA_VERSION,
+        "semantic_source": "references/role-contracts.md#conditional-security-and-observability-sweep",
+        "required_fields": ["schema_version", "sweep_triggered", "triggers", "inspected", "exclusions"],
+        "exclusion_required_fields": ["category", "reason"],
+        "validation_rules": {
+            "triggered_requires_at_least_one_trigger": True,
+            "non_triggered_requires_no_triggers": True,
+            "categories_require_exact_inspected_or_excluded_partition": True,
+            "exclusion_reason_must_be_short_single_line_non_sensitive": True,
+        },
+        "triggers": [
+            {"id": identifier, "semantic_text": semantic_text}
+            for identifier, semantic_text in COVERAGE_TRIGGER_DEFINITIONS
+        ],
+        "categories": [
+            {"id": identifier, "semantic_text": semantic_text}
+            for identifier, semantic_text in COVERAGE_CATEGORY_DEFINITIONS
+        ],
+    }
+    return {**core, "fingerprint": f"sha256:{sha256_bytes(canonical_json(core))}"}
 
 
 def sha256_file(path: Path) -> str:
@@ -142,6 +219,12 @@ def validate_uuid(value: str, label: str) -> str:
     return value
 
 
+def require_nonempty_string(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        fail(f"{label} is required")
+    return value
+
+
 def normalize_owned_file(repo: Path, raw: str) -> str:
     if not raw:
         fail("--owned-file cannot be empty")
@@ -198,6 +281,8 @@ def validate_snapshot(value: dict[str, Any], path: Path) -> None:
     required = {"schema_version", "git_head", "status_sha256", "diff_sha256", "files", "snapshot_hash"}
     if not required.issubset(value):
         fail(f"snapshot is missing required fields: {path}")
+    if value.get("schema_version") != SCHEMA_VERSION:
+        fail(f"snapshot schema is unsupported: {path}")
     core = {key: value[key] for key in ("schema_version", "git_head", "status_sha256", "diff_sha256", "files")}
     if value["snapshot_hash"] != sha256_bytes(canonical_json(core)):
         fail(f"snapshot hash mismatch: {path}")
@@ -205,14 +290,70 @@ def validate_snapshot(value: dict[str, Any], path: Path) -> None:
 
 def load_run(ledger: Path) -> dict[str, Any]:
     ledger = ledger.resolve()
-    run = read_json(ledger / "run.json")
+    run_path = ledger / "run.json"
+    run = read_json(run_path)
     if run.get("schema_version") != SCHEMA_VERSION:
-        fail(f"unsupported ledger schema in {ledger / 'run.json'}")
+        fail(f"unsupported ledger schema in {run_path}; create a new route-aware ledger")
     validate_uuid(str(run.get("run_id", "")), "run_id")
+    route = run.get("route")
+    if route not in LEDGER_ROUTES:
+        fail("ledger route declaration is missing or invalid; create a new ledger with --route delegate|audit|full")
     repo = canonical_repo(str(run.get("repo", "")))
     if str(repo) != str(Path(run["repo"]).resolve()):
         fail("ledger repository path changed after initialization")
+
+    declaration_path = ledger / "route-declaration.json"
+    declaration = read_json(declaration_path)
+    expected_hash = run.get("route_declaration_sha256")
+    if not isinstance(expected_hash, str) or expected_hash != sha256_bytes(canonical_json(declaration)):
+        fail("immutable route declaration integrity check failed")
+    if (
+        declaration.get("schema_version") != SCHEMA_VERSION
+        or declaration.get("run_id") != run["run_id"]
+        or declaration.get("route") != route
+        or declaration.get("repo") != run["repo"]
+    ):
+        fail("immutable route declaration does not match the initialized run")
     return run
+
+
+def load_artifacts(ledger: Path, directory: str) -> list[dict[str, Any]]:
+    folder = ledger / directory
+    if not folder.is_dir():
+        return []
+    artifacts = []
+    for path in sorted(folder.glob("*.json")):
+        artifacts.append(read_json(path))
+    return artifacts
+
+
+def require_open_run(ledger: Path) -> None:
+    if (ledger / "acceptance.json").exists():
+        fail("ledger run is already accepted and cannot record additional evidence")
+
+
+def review_boundary_active(ledger: Path) -> bool:
+    return (ledger / "before-review.json").exists() and not (ledger / "after-review.json").exists()
+
+
+def active_route(ledger: Path, run: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+    current = str(run["route"])
+    escalations = load_artifacts(ledger, "escalations")
+    for index, escalation in enumerate(escalations, start=1):
+        if escalation.get("schema_version") != SCHEMA_VERSION:
+            fail("route escalation has an unsupported schema")
+        if escalation.get("run_id") != run["run_id"]:
+            fail("route escalation belongs to a different ledger run")
+        if escalation.get("sequence") != index:
+            fail("route escalation sequence is invalid")
+        if escalation.get("from_route") != current:
+            fail("route escalation does not continue from the active route")
+        target = escalation.get("to_route")
+        if target not in LEDGER_ROUTES or ROUTE_RANK[str(target)] <= ROUTE_RANK[current]:
+            fail("route escalation is not monotonic")
+        require_nonempty_string(escalation.get("reason"), "route escalation reason")
+        current = str(target)
+    return current, escalations
 
 
 def default_ledger_root() -> Path:
@@ -231,6 +372,8 @@ def default_ledger_root() -> Path:
 def cmd_init(args: argparse.Namespace) -> None:
     repo = canonical_repo(args.repo)
     run_id = validate_uuid(args.run_id, "run_id")
+    if args.route not in LEDGER_ROUTES:
+        fail("--route must be delegate, audit, or full; solo is outside this ledger")
     if not args.owned_file:
         fail("at least one --owned-file is required")
     owned = sorted({normalize_owned_file(repo, item) for item in args.owned_file})
@@ -239,6 +382,13 @@ def cmd_init(args: argparse.Namespace) -> None:
     if run_dir.exists():
         fail(f"ledger run already exists: {run_dir}")
     initial = make_snapshot(repo)
+    declaration = {
+        "schema_version": SCHEMA_VERSION,
+        "run_id": run_id,
+        "repo": str(repo),
+        "route": args.route,
+        "declared_at": now(),
+    }
     run = {
         "schema_version": SCHEMA_VERSION,
         "run_id": run_id,
@@ -246,17 +396,21 @@ def cmd_init(args: argparse.Namespace) -> None:
         "created_at": now(),
         "base_commit": initial["git_head"],
         "owned_files": owned,
+        "route": args.route,
+        "route_declaration_sha256": sha256_bytes(canonical_json(declaration)),
         "review_policy": {"requires_hard_isolation": True},
     }
     try:
         run_dir.mkdir(parents=True, exist_ok=False, mode=0o700)
         write_json(run_dir / "run.json", run, exclusive=True)
+        write_json(run_dir / "route-declaration.json", declaration, exclusive=True)
         write_json(run_dir / "initial-state.json", initial, exclusive=True)
         (run_dir / "workers").mkdir(mode=0o700)
         (run_dir / "verifications").mkdir(mode=0o700)
+        (run_dir / "escalations").mkdir(mode=0o700)
     except OSError as exc:
         fail(f"could not create ledger run {run_dir}: {exc}")
-    print(f"LEDGER INITIALIZED: {run_dir}")
+    print(f"LEDGER INITIALIZED: {run_dir} (route={args.route})")
 
 
 def require_worker_pin(role: str, model: str, effort: str) -> None:
@@ -293,48 +447,184 @@ def common_runtime_fields(args: argparse.Namespace) -> dict[str, Any]:
 
 def cmd_record_worker(args: argparse.Namespace) -> None:
     ledger = Path(args.ledger).expanduser().resolve()
-    load_run(ledger)
+    run = load_run(ledger)
+    require_open_run(ledger)
+    if review_boundary_active(ledger):
+        fail("cannot record worker evidence while a final review boundary is active")
+    route, _ = active_route(ledger, run)
+    if route == "audit":
+        fail("audit route rejects worker evidence; root implementation is the required matrix")
+    workers = load_artifacts(ledger, "workers")
+    if workers:
+        fail("this route-scoped ledger permits exactly one implementation worker")
     require_worker_pin(args.role, args.model, args.effort)
-    record = common_runtime_fields(args)
+    if route == "delegate" and args.role != LUNA_ROLE:
+        fail("delegate route accepts only the bounded Luna implementation lane; Terra requires full")
+    record = {"schema_version": SCHEMA_VERSION, **common_runtime_fields(args)}
     write_json(ledger / "workers" / f"{args.thread_id}.json", record, exclusive=True)
-    print(f"WORKER RECORDED: {args.thread_id}")
+    print(f"WORKER RECORDED: {args.thread_id} (route={route})")
 
 
 def cmd_record_verification(args: argparse.Namespace) -> None:
     ledger = Path(args.ledger).expanduser().resolve()
-    load_run(ledger)
+    run = load_run(ledger)
+    require_open_run(ledger)
+    if review_boundary_active(ledger):
+        fail("cannot record verification evidence while a final review boundary is active")
+    label = require_nonempty_string(args.label, "verification label")
     evidence = Path(args.evidence_file).expanduser().resolve()
     if not evidence.is_file():
         fail(f"verification evidence file is unavailable: {evidence}")
     if args.exit_code < 0:
         fail("--exit-code cannot be negative")
+    repo = canonical_repo(str(run["repo"]))
     record = {
         "schema_version": SCHEMA_VERSION,
-        "command": args.command,
+        "label": label,
         "exit_code": args.exit_code,
         "evidence_file": str(evidence),
         "evidence_sha256": sha256_file(evidence),
+        "repository_snapshot_hash": make_snapshot(repo)["snapshot_hash"],
         "recorded_at": now(),
     }
     write_json(ledger / "verifications" / f"{uuid.uuid4()}.json", record, exclusive=True)
-    print(f"VERIFICATION RECORDED: {args.command}")
+    print(f"VERIFICATION RECORDED: {label}")
 
 
 def cmd_snapshot(args: argparse.Namespace) -> None:
     ledger = Path(args.ledger).expanduser().resolve()
     run = load_run(ledger)
-    if args.label not in {"before-review", "after-review"}:
-        fail("snapshot label must be before-review or after-review")
+    require_open_run(ledger)
+    route, _ = active_route(ledger, run)
     repo = canonical_repo(str(run["repo"]))
-    target = ledger / f"{args.label}.json"
-    write_json(target, make_snapshot(repo), exclusive=True)
+    current = make_snapshot(repo)
+
+    if args.label == "verified-state":
+        if route != "delegate":
+            fail("verified-state snapshots are reserved for delegate route state binding")
+        workers = validated_workers(ledger)
+        if len(workers) != 1 or workers[0].get("agent_role") != LUNA_ROLE:
+            fail("delegate verified-state requires exactly one Luna worker evidence record")
+        verifications = validated_verifications(ledger)
+        require_verification_binding(verifications, str(current["snapshot_hash"]), "verified-state")
+        write_json(ledger / "verified-state.json", current, exclusive=True)
+    elif args.label == "before-review":
+        if route not in {"audit", "full"}:
+            fail("review snapshots require audit or full route")
+        if (ledger / "review.json").exists():
+            fail("accepted review evidence already exists; the review boundary is closed")
+        before_path = ledger / "before-review.json"
+        after_path = ledger / "after-review.json"
+        if before_path.exists() and not after_path.exists():
+            fail("a final review boundary is already active")
+        require_review_prerequisites(ledger, route, str(current["snapshot_hash"]))
+        if after_path.exists():
+            try:
+                after_path.unlink()
+            except OSError as exc:
+                fail(f"cannot clear the unaccepted after-review snapshot: {exc}")
+        write_json(before_path, current)
+    elif args.label == "after-review":
+        if route not in {"audit", "full"}:
+            fail("review snapshots require audit or full route")
+        if (ledger / "review.json").exists():
+            fail("accepted review evidence already exists; the review boundary is closed")
+        before_path = ledger / "before-review.json"
+        after_path = ledger / "after-review.json"
+        if after_path.exists():
+            fail("after-review snapshot already exists for the active boundary")
+        before = read_json(before_path)
+        validate_snapshot(before, before_path)
+        if current["snapshot_hash"] != before["snapshot_hash"]:
+            fail("review changed repository/artifact state; read-only boundary failed")
+        write_json(after_path, current, exclusive=True)
+    else:
+        fail("snapshot label must be verified-state, before-review, or after-review")
+
     print(f"SNAPSHOT RECORDED: {args.label}")
+
+
+def require_safe_coverage_reason(value: Any) -> str:
+    reason = require_nonempty_string(value, "coverage exclusion reason")
+    if len(reason) > 240 or any(character in reason for character in "\r\n\t"):
+        fail("coverage exclusion reason must be a short, single-line non-sensitive justification")
+    if SENSITIVE_COVERAGE_RE.search(reason):
+        fail("coverage exclusion reason appears to contain a sensitive value or payload marker")
+    return reason
+
+
+def validate_coverage(value: dict[str, Any]) -> None:
+    required = {"schema_version", "sweep_triggered", "triggers", "inspected", "exclusions"}
+    if set(value) != required:
+        fail("coverage must contain exactly schema_version, sweep_triggered, triggers, inspected, and exclusions")
+    if value.get("schema_version") != COVERAGE_SCHEMA_VERSION:
+        fail("coverage schema version is unsupported")
+    triggered = value.get("sweep_triggered")
+    if not isinstance(triggered, bool):
+        fail("coverage sweep_triggered must be a boolean")
+
+    triggers = value.get("triggers")
+    if not isinstance(triggers, list) or any(not isinstance(item, str) for item in triggers):
+        fail("coverage triggers must be a list of identifiers")
+    if len(set(triggers)) != len(triggers) or any(item not in COVERAGE_TRIGGERS for item in triggers):
+        fail("coverage triggers contain an unknown or duplicate identifier")
+    if triggered and not triggers:
+        fail("triggered coverage must name at least one trigger")
+    if not triggered and triggers:
+        fail("non-triggered coverage must not name triggers")
+
+    inspected = value.get("inspected")
+    if not isinstance(inspected, list) or any(not isinstance(item, str) for item in inspected):
+        fail("coverage inspected must be a list of category identifiers")
+    if len(set(inspected)) != len(inspected) or any(item not in COVERAGE_CATEGORIES for item in inspected):
+        fail("coverage inspected contains an unknown or duplicate category")
+    if not triggered and inspected:
+        fail("non-triggered coverage must not mark categories as inspected")
+
+    exclusions = value.get("exclusions")
+    if not isinstance(exclusions, list):
+        fail("coverage exclusions must be a list")
+    excluded_categories: set[str] = set()
+    for exclusion in exclusions:
+        if not isinstance(exclusion, dict) or set(exclusion) != {"category", "reason"}:
+            fail("each coverage exclusion must contain exactly category and reason")
+        category = exclusion.get("category")
+        if not isinstance(category, str) or category not in COVERAGE_CATEGORIES:
+            fail("coverage exclusion contains an unknown category")
+        if category in excluded_categories:
+            fail("coverage exclusions contain a duplicate category")
+        excluded_categories.add(category)
+        require_safe_coverage_reason(exclusion.get("reason"))
+
+    inspected_categories = set(inspected)
+    if inspected_categories & excluded_categories:
+        fail("coverage categories cannot be both inspected and excluded")
+    if inspected_categories | excluded_categories != COVERAGE_CATEGORIES:
+        fail("coverage must account for every review category by inspection or justified exclusion")
+
+
+def read_coverage(path: Path) -> dict[str, Any]:
+    coverage = read_json(path)
+    validate_coverage(coverage)
+    return coverage
+
+
+def cmd_coverage_schema(args: argparse.Namespace) -> None:
+    del args
+    print(json.dumps(coverage_schema_document(), ensure_ascii=True, sort_keys=True, separators=(",", ":")))
 
 
 def cmd_record_review(args: argparse.Namespace) -> None:
     ledger = Path(args.ledger).expanduser().resolve()
     run = load_run(ledger)
+    require_open_run(ledger)
+    route, _ = active_route(ledger, run)
+    if route not in {"audit", "full"}:
+        fail("delegate route forbids Sol review evidence; its acceptance uses verified-state binding")
+    if args.verdict != "ship":
+        fail("record-review persists only a final ship verdict; handle fix-first or rethink before persistence")
     require_review_pin(args.role, args.model, args.effort)
+    runtime = common_runtime_fields(args)
     if not args.sandbox_policy_type:
         fail("review requires observed sandbox policy type")
     if not args.permission_profile_type:
@@ -349,27 +639,55 @@ def cmd_record_review(args: argparse.Namespace) -> None:
     after = read_json(after_path)
     validate_snapshot(before, before_path)
     validate_snapshot(after, after_path)
-    validate_uuid(args.thread_id, "thread_id")
+    if before["snapshot_hash"] != after["snapshot_hash"]:
+        fail("review changed repository/artifact state; read-only boundary failed")
+    require_review_prerequisites(ledger, route, str(before["snapshot_hash"]))
+    coverage_path = Path(args.coverage_file).expanduser().resolve()
+    if not coverage_path.is_file():
+        fail(f"review coverage file is unavailable: {coverage_path}")
+    coverage = read_coverage(coverage_path)
     record = {
         "schema_version": SCHEMA_VERSION,
-        "thread_id": args.thread_id,
-        "agent_role": args.role,
-        "model": args.model,
-        "effort": args.effort,
-        "cwd": args.cwd,
-        "agent_path": args.agent_path,
-        "model_provider": args.model_provider,
-        "sandbox_policy_type": args.sandbox_policy_type,
-        "permission_profile_type": args.permission_profile_type,
+        **runtime,
+        "route": route,
         "verdict": args.verdict,
         "reason": args.reason,
         "residual_risk": args.residual_risk,
+        "coverage": coverage,
+        "coverage_sha256": sha256_bytes(canonical_json(coverage)),
         "before_snapshot_hash": before["snapshot_hash"],
         "after_snapshot_hash": after["snapshot_hash"],
-        "recorded_at": now(),
     }
     write_json(ledger / "review.json", record, exclusive=True)
-    print(f"REVIEW RECORDED: {args.verdict}")
+    print(f"REVIEW RECORDED: {args.verdict} (route={route})")
+
+
+def cmd_escalate(args: argparse.Namespace) -> None:
+    ledger = Path(args.ledger).expanduser().resolve()
+    run = load_run(ledger)
+    require_open_run(ledger)
+    if (ledger / "before-review.json").exists():
+        fail("cannot escalate after a final review boundary has started")
+    current, escalations = active_route(ledger, run)
+    target = args.to_route
+    if target not in LEDGER_ROUTES or ROUTE_RANK[target] <= ROUTE_RANK[current]:
+        fail(f"route escalation must be monotonic from {current} to a stronger route")
+    workers = load_artifacts(ledger, "workers")
+    if target == "audit" and workers:
+        fail("cannot escalate to audit after worker evidence; escalate to full or create a new audit ledger")
+    reason = require_nonempty_string(args.reason, "route escalation reason")
+    sequence = len(escalations) + 1
+    record = {
+        "schema_version": SCHEMA_VERSION,
+        "run_id": run["run_id"],
+        "sequence": sequence,
+        "from_route": current,
+        "to_route": target,
+        "reason": reason,
+        "escalated_at": now(),
+    }
+    write_json(ledger / "escalations" / f"{sequence:04d}.json", record, exclusive=True)
+    print(f"ROUTE ESCALATED: {current} -> {target}")
 
 
 def changed_paths(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
@@ -379,36 +697,12 @@ def changed_paths(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
     return sorted(path for path in paths if before_files.get(path) != after_files.get(path))
 
 
-def load_artifacts(ledger: Path, directory: str) -> list[dict[str, Any]]:
-    folder = ledger / directory
-    if not folder.is_dir():
-        return []
-    artifacts = []
-    for path in sorted(folder.glob("*.json")):
-        artifacts.append(read_json(path))
-    return artifacts
-
-
-def cmd_accept(args: argparse.Namespace) -> None:
-    ledger = Path(args.ledger).expanduser().resolve()
-    run = load_run(ledger)
-    initial_path = ledger / "initial-state.json"
-    before_path = ledger / "before-review.json"
-    after_path = ledger / "after-review.json"
-    review_path = ledger / "review.json"
-    initial = read_json(initial_path)
-    before = read_json(before_path)
-    after = read_json(after_path)
-    review = read_json(review_path)
-    validate_snapshot(initial, initial_path)
-    validate_snapshot(before, before_path)
-    validate_snapshot(after, after_path)
-
+def validated_workers(ledger: Path) -> list[dict[str, Any]]:
     workers = load_artifacts(ledger, "workers")
-    if not workers:
-        fail("no implementation worker evidence was recorded")
     worker_ids: set[str] = set()
     for worker in workers:
+        if worker.get("schema_version") != SCHEMA_VERSION:
+            fail("worker evidence has an unsupported schema")
         thread_id = validate_uuid(str(worker.get("thread_id", "")), "worker thread_id")
         if thread_id in worker_ids:
             fail(f"duplicate worker thread id: {thread_id}")
@@ -416,19 +710,60 @@ def cmd_accept(args: argparse.Namespace) -> None:
         require_worker_pin(str(worker.get("agent_role", "")), str(worker.get("model", "")), str(worker.get("effort", "")))
         if not worker.get("cwd"):
             fail(f"worker evidence is missing cwd: {thread_id}")
+    return workers
 
+
+def validated_verifications(ledger: Path) -> list[dict[str, Any]]:
     verifications = load_artifacts(ledger, "verifications")
     if not verifications:
         fail("no verification evidence was recorded")
     for verification in verifications:
-        if not isinstance(verification.get("exit_code"), int) or verification["exit_code"] != 0:
-            fail(f"verification did not pass: {verification.get('command', '<unknown>')}")
+        if verification.get("schema_version") != SCHEMA_VERSION:
+            fail("verification evidence has an unsupported schema")
+        exit_code = verification.get("exit_code")
+        if not isinstance(exit_code, int) or exit_code < 0:
+            fail(f"verification has an invalid exit code: {verification.get('label', '<unknown>')}")
+        require_nonempty_string(verification.get("label"), "verification label")
         evidence = Path(str(verification.get("evidence_file", "")))
         if not evidence.is_file():
             fail(f"verification evidence file disappeared: {evidence}")
         if sha256_file(evidence) != verification.get("evidence_sha256"):
             fail(f"verification evidence changed: {evidence}")
+        snapshot_hash = verification.get("repository_snapshot_hash")
+        if not isinstance(snapshot_hash, str) or len(snapshot_hash) != 64:
+            fail("verification evidence is missing its repository-state binding")
+    return verifications
 
+
+def require_verification_binding(verifications: list[dict[str, Any]], snapshot_hash: str, label: str) -> None:
+    if not any(
+        verification.get("exit_code") == 0
+        and verification.get("repository_snapshot_hash") == snapshot_hash
+        for verification in verifications
+    ):
+        fail(f"no successful verification is bound to the exact {label} repository state")
+
+
+def require_review_prerequisites(ledger: Path, route: str, snapshot_hash: str) -> None:
+    workers = validated_workers(ledger)
+    if route == "audit" and workers:
+        fail("audit review requires no worker evidence")
+    if route == "full" and len(workers) != 1:
+        fail("full review requires exactly one implementation worker evidence record")
+    verifications = validated_verifications(ledger)
+    require_verification_binding(verifications, snapshot_hash, "before-review")
+
+
+def validated_review(
+    ledger: Path,
+    before: dict[str, Any],
+    after: dict[str, Any],
+    expected_route: str,
+) -> dict[str, Any]:
+    review_path = ledger / "review.json"
+    review = read_json(review_path)
+    if review.get("schema_version") != SCHEMA_VERSION:
+        fail("review evidence has an unsupported schema")
     require_review_pin(str(review.get("agent_role", "")), str(review.get("model", "")), str(review.get("effort", "")))
     validate_uuid(str(review.get("thread_id", "")), "review thread_id")
     if not review.get("cwd"):
@@ -437,6 +772,8 @@ def cmd_accept(args: argparse.Namespace) -> None:
         fail("review evidence is missing reason")
     if not review.get("residual_risk"):
         fail("review evidence is missing residual risk")
+    if review.get("route") != expected_route:
+        fail("review evidence was recorded for a different active route")
     if review.get("verdict") != "ship":
         fail(f"final Sol review is not ship: {review.get('verdict')}")
     if not review.get("permission_profile_type"):
@@ -445,21 +782,16 @@ def cmd_accept(args: argparse.Namespace) -> None:
         fail("review evidence is missing sandbox policy type")
     if review.get("before_snapshot_hash") != before["snapshot_hash"] or review.get("after_snapshot_hash") != after["snapshot_hash"]:
         fail("review does not reference the recorded before/after snapshots")
-    if before["snapshot_hash"] != after["snapshot_hash"]:
-        fail("review changed repository/artifact state; read-only acceptance failed")
+    coverage = review.get("coverage")
+    if not isinstance(coverage, dict):
+        fail("review evidence is missing structured coverage")
+    validate_coverage(coverage)
+    if review.get("coverage_sha256") != sha256_bytes(canonical_json(coverage)):
+        fail("review coverage integrity check failed")
+    return review
 
-    hard_isolation = review["sandbox_policy_type"] == "read-only"
-    if not hard_isolation:
-        if not args.allow_behavioral_read_only:
-            fail("review sandbox was not observed as read-only; pass --allow-behavioral-read-only only when hard isolation is not required")
-        if str(review.get("residual_risk", "")).strip().lower() in {"", "none", "none."}:
-            fail("behavioral read-only acceptance requires explicit residual-risk reporting")
 
-    repo = canonical_repo(str(run["repo"]))
-    current = make_snapshot(repo)
-    if current["snapshot_hash"] != after["snapshot_hash"]:
-        fail("repository changed after the after-review snapshot")
-
+def check_scope(run: dict[str, Any], initial: dict[str, Any], current: dict[str, Any]) -> None:
     owned_files = set(run.get("owned_files", []))
     out_of_scope = [
         path
@@ -469,21 +801,101 @@ def cmd_accept(args: argparse.Namespace) -> None:
     if out_of_scope:
         fail("out-of-scope files changed: " + ", ".join(out_of_scope))
 
-    acceptance = {
+
+def cmd_accept(args: argparse.Namespace) -> None:
+    ledger = Path(args.ledger).expanduser().resolve()
+    run = load_run(ledger)
+    require_open_run(ledger)
+    route, escalations = active_route(ledger, run)
+    initial_path = ledger / "initial-state.json"
+    initial = read_json(initial_path)
+    validate_snapshot(initial, initial_path)
+    workers = validated_workers(ledger)
+    verifications = validated_verifications(ledger)
+    repo = canonical_repo(str(run["repo"]))
+
+    acceptance: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "run_id": run["run_id"],
+        "declared_route": run["route"],
+        "route": route,
+        "route_escalations": len(escalations),
         "accepted_at": now(),
-        "current_snapshot_hash": current["snapshot_hash"],
-        "changed_files": changed_paths(initial, current),
-        "review_verdict": review["verdict"],
-        "hard_isolation": hard_isolation,
-        "residual_risk": review.get("residual_risk", "none"),
     }
+
+    if route == "delegate":
+        if args.allow_behavioral_read_only:
+            fail("--allow-behavioral-read-only applies only to audit or full Sol review")
+        if len(workers) != 1:
+            fail("delegate route requires exactly one Luna worker evidence record")
+        if workers[0].get("agent_role") != LUNA_ROLE:
+            fail("delegate route requires Luna worker evidence; Terra is accepted only for full")
+        if (ledger / "review.json").exists():
+            fail("delegate route must not contain Sol review evidence")
+        verified_path = ledger / "verified-state.json"
+        verified = read_json(verified_path)
+        validate_snapshot(verified, verified_path)
+        require_verification_binding(verifications, str(verified["snapshot_hash"]), "verified-state")
+        current = make_snapshot(repo)
+        if current["snapshot_hash"] != verified["snapshot_hash"]:
+            fail("repository changed after the verified-state snapshot")
+        check_scope(run, initial, current)
+        acceptance.update(
+            {
+                "current_snapshot_hash": current["snapshot_hash"],
+                "changed_files": changed_paths(initial, current),
+                "verification_state_binding": verified["snapshot_hash"],
+                "review_verdict": None,
+                "hard_isolation": None,
+                "residual_risk": None,
+            }
+        )
+        mode = "delegate verified-state binding"
+    else:
+        expected_workers = 0 if route == "audit" else 1
+        if len(workers) != expected_workers:
+            if route == "audit":
+                fail("audit route requires verification and review evidence with no worker evidence")
+            fail("full route requires exactly one Luna or Terra worker evidence record")
+        before_path = ledger / "before-review.json"
+        after_path = ledger / "after-review.json"
+        before = read_json(before_path)
+        after = read_json(after_path)
+        validate_snapshot(before, before_path)
+        validate_snapshot(after, after_path)
+        require_verification_binding(verifications, str(before["snapshot_hash"]), "before-review")
+        review = validated_review(ledger, before, after, route)
+        if before["snapshot_hash"] != after["snapshot_hash"]:
+            fail("review changed repository/artifact state; read-only acceptance failed")
+
+        hard_isolation = review["sandbox_policy_type"] == "read-only"
+        if not hard_isolation:
+            if not args.allow_behavioral_read_only:
+                fail("review sandbox was not observed as read-only; pass --allow-behavioral-read-only only when hard isolation is not required")
+            if str(review.get("residual_risk", "")).strip().lower() in {"", "none", "none."}:
+                fail("behavioral read-only acceptance requires explicit residual-risk reporting")
+
+        current = make_snapshot(repo)
+        if current["snapshot_hash"] != after["snapshot_hash"]:
+            fail("repository changed after the after-review snapshot")
+        check_scope(run, initial, current)
+        acceptance.update(
+            {
+                "current_snapshot_hash": current["snapshot_hash"],
+                "changed_files": changed_paths(initial, current),
+                "review_verdict": review["verdict"],
+                "hard_isolation": hard_isolation,
+                "residual_risk": review.get("residual_risk", "none"),
+                "coverage_sha256": review["coverage_sha256"],
+            }
+        )
+        mode = "hard read-only" if hard_isolation else "behavioral read-only with residual risk"
+
     write_json(ledger / "acceptance.json", acceptance, exclusive=True)
     if args.json:
         print(json.dumps(acceptance, ensure_ascii=True, sort_keys=True))
     else:
-        print(f"ACCEPTED: {run['run_id']} ({'hard read-only' if hard_isolation else 'behavioral read-only with residual risk'})")
+        print(f"ACCEPTED: {run['run_id']} ({mode})")
 
 
 def add_runtime_arguments(parser: argparse.ArgumentParser) -> None:
@@ -502,39 +914,58 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    init = subparsers.add_parser("init", help="initialize a new run ledger")
+    coverage_schema = subparsers.add_parser(
+        "coverage-schema",
+        help="emit the public exact coverage identifier and artifact schema",
+    )
+    coverage_schema.add_argument(
+        "--json",
+        action="store_true",
+        help="explicitly request the deterministic JSON document (the default output)",
+    )
+    coverage_schema.set_defaults(function=cmd_coverage_schema)
+
+    init = subparsers.add_parser("init", help="initialize a new route-scoped run ledger")
     init.add_argument("--repo", required=True)
     init.add_argument("--ledger-root")
     init.add_argument("--run-id", required=True)
+    init.add_argument("--route", required=True, choices=LEDGER_ROUTES)
     init.add_argument("--owned-file", action="append", default=[])
     init.set_defaults(function=cmd_init)
+
+    escalate = subparsers.add_parser("escalate", help="monotonically escalate an initialized route")
+    escalate.add_argument("--ledger", required=True)
+    escalate.add_argument("--to", dest="to_route", required=True, choices=LEDGER_ROUTES)
+    escalate.add_argument("--reason", required=True)
+    escalate.set_defaults(function=cmd_escalate)
 
     worker = subparsers.add_parser("record-worker", help="record observed implementation routing")
     worker.add_argument("--ledger", required=True)
     add_runtime_arguments(worker)
     worker.set_defaults(function=cmd_record_worker)
 
-    verification = subparsers.add_parser("record-verification", help="record a verification command and immutable evidence hash")
+    verification = subparsers.add_parser("record-verification", help="record a safe verification label and immutable evidence hash")
     verification.add_argument("--ledger", required=True)
-    verification.add_argument("--command", required=True)
+    verification.add_argument("--label", required=True)
     verification.add_argument("--exit-code", required=True, type=int)
     verification.add_argument("--evidence-file", required=True)
     verification.set_defaults(function=cmd_record_verification)
 
     snapshot = subparsers.add_parser("snapshot", help="capture repository/artifact state")
     snapshot.add_argument("--ledger", required=True)
-    snapshot.add_argument("--label", required=True, choices=("before-review", "after-review"))
+    snapshot.add_argument("--label", required=True, choices=("verified-state", "before-review", "after-review"))
     snapshot.set_defaults(function=cmd_snapshot)
 
     review = subparsers.add_parser("record-review", help="record the fresh Sol review")
     review.add_argument("--ledger", required=True)
     add_runtime_arguments(review)
-    review.add_argument("--verdict", required=True, choices=("ship", "fix-first", "rethink"))
+    review.add_argument("--verdict", required=True, choices=("ship",))
     review.add_argument("--reason", required=True)
     review.add_argument("--residual-risk", required=True)
+    review.add_argument("--coverage-file", required=True)
     review.set_defaults(function=cmd_record_review)
 
-    accept = subparsers.add_parser("accept", help="fail-closed acceptance gate")
+    accept = subparsers.add_parser("accept", help="fail-closed route-aware acceptance gate")
     accept.add_argument("--ledger", required=True)
     accept.add_argument("--allow-behavioral-read-only", action="store_true")
     accept.add_argument("--json", action="store_true")

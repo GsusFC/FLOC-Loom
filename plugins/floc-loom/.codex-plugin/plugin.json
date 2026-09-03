@@ -1,7 +1,7 @@
 {
   "name": "floc-loom",
-  "version": "0.4.0",
-  "description": "Codex-native delivery workflow with adaptive execution graphs, domain-aware Luna/Terra routing, and fail-closed Sol review.",
+  "version": "0.5.0",
+  "description": "Codex-native selective delivery workflow with route-aware ledger acceptance and fail-closed Sol review.",
   "author": {
     "name": "FLOC*",
     "url": "https://github.com/GsusFC"
@@ -18,8 +18,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "FLOC*Loom",
-    "shortDescription": "Plan with Sol, build frontend/backend with Luna Max, and escalate to Terra when needed.",
-    "longDescription": "FLOC*Loom gives Codex an adaptive delivery workflow: GPT-5.6 Sol creates direct specs or dependency graphs, role-pinned Luna Max implements bounded frontend/backend nodes, Terra Max handles capability and high-risk escalations, and a fresh Sol reviewer must approve machine-checked evidence before acceptance.",
+    "shortDescription": "Plan with Sol, choose a safe route, build with Luna/Terra, and accept evidence fail-closed.",
+    "longDescription": "FLOC*Loom gives Codex a selective delivery workflow: GPT-5.6 Sol declares solo, delegate, audit, or full per deliverable; role-pinned Luna/Terra implement when appropriate; and route-aware evidence gates fail closed before acceptance.",
     "developerName": "FLOC*",
     "category": "Productivity",
     "capabilities": [
